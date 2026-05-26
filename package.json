@@ -5,17 +5,18 @@
   "main": "index.js",
   "scripts": {
     "prepare": "husky",
-    "start": "tsx src/index.ts",
-    "dev": "tsx src/index.ts",
-    "watch": "tsx watch src/index.ts"
+    "start": "bun src/index.ts",
+    "dev": "bun src/index.ts",
+    "watch": "bun --watch src/index.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
+  "packageManager": "bun@1.3.11",
   "devEngines": {
     "packageManager": {
-      "name": "pnpm",
-      "version": "11.0.9",
+      "name": "bun",
+      "version": "1.3.11",
       "onFail": "download"
     }
   },
@@ -27,7 +28,6 @@
     "commitlint": "^21.0.1",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.5",
-    "tsx": "^4.22.3",
     "typescript": "^6.0.3"
   },
   "dependencies": {
