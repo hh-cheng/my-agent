@@ -1,4 +1,13 @@
-type Prompt = { role: string; content: { text: string }[] }[]
+import type { LanguageModel } from 'ai'
+
+type MockModel = Extract<LanguageModel, { specificationVersion: 'v2' }>
+type MockCallOptions = Parameters<MockModel['doGenerate']>[0]
+type MockStreamPart =
+  Awaited<ReturnType<MockModel['doStream']>>['stream'] extends ReadableStream<
+    infer Chunk
+  >
+    ? Chunk
+    : never
 
 const RESPONSES = {
   default:
@@ -9,20 +18,17 @@ const RESPONSES = {
 }
 
 const USAGE = {
-  inputTokens: {
-    total: 10,
-    noCache: 10,
-    cacheRead: void 0,
-    cacheWrite: void 0,
-  },
-  outputTokens: { total: 20, text: 20, reasoning: void 0 },
+  inputTokens: 10,
+  outputTokens: 20,
+  totalTokens: 30,
 }
 
-function pickResponse(prompt: Prompt): string {
+function pickResponse(prompt: MockCallOptions['prompt']): string {
   const userMsgs = (prompt || []).filter((m) => m.role === 'user')
   const last = userMsgs[userMsgs.length - 1]
   const text = (last?.content || [])
-    .map((c) => c?.text || '')
+    .filter((part) => part.type === 'text')
+    .map((part) => part.text)
     .join('')
     .toLowerCase()
 
@@ -33,7 +39,10 @@ function pickResponse(prompt: Prompt): string {
   return RESPONSES.default
 }
 
-function createDelayedStream(chunks: unknown[], delayMs = 30): ReadableStream {
+function createDelayedStream(
+  chunks: MockStreamPart[],
+  delayMs = 30,
+): Awaited<ReturnType<MockModel['doStream']>>['stream'] {
   return new ReadableStream({
     start(controller) {
       let i = 0
@@ -50,37 +59,39 @@ function createDelayedStream(chunks: unknown[], delayMs = 30): ReadableStream {
   })
 }
 
-export function createMockModel() {
+export function createMockModel(): MockModel {
   return {
     specificationVersion: 'v2' as const,
     provider: 'mock',
     modelId: 'mock-model',
 
-    get supportedUrls() {
-      return Promise.resolve({})
-    },
+    supportedUrls: {},
 
-    async doGenerate({ prompt }: { prompt: Prompt }) {
+    async doGenerate({ prompt }: MockCallOptions) {
       return {
         usage: USAGE,
         warnings: [],
-        finishReason: { unified: 'stop', raw: void 0 },
+        finishReason: 'stop',
         content: [{ type: 'text', text: pickResponse(prompt) }],
       }
     },
 
-    async doStream({ prompt }: { prompt: Prompt }) {
+    async doStream({ prompt }: MockCallOptions) {
       const text = pickResponse(prompt)
       const id = 'text-1'
-      const chunks = [
+      const chunks: MockStreamPart[] = [
         { type: 'text-start', id },
-        ...text
-          .split('')
-          .map((char) => ({ type: 'text-delta', id, delta: char })),
+        ...text.split('').map(
+          (char): MockStreamPart => ({
+            type: 'text-delta',
+            id,
+            delta: char,
+          }),
+        ),
         { type: 'text-end', id },
         {
           type: 'finish',
-          finishReason: { unified: 'stop', raw: void 0 },
+          finishReason: 'stop',
           usage: USAGE,
         },
       ]
