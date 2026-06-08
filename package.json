@@ -5,7 +5,6 @@
   "main": "index.js",
   "scripts": {
     "prepare": "husky",
-    "start": "bun src/index.ts",
     "dev": "bun src/index.ts",
     "watch": "bun --watch src/index.ts"
   },
