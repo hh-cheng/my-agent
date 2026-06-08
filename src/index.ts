@@ -1,3 +1,14 @@
+/**
+ * Super Agent 入口（v0.2）
+ *
+ * 从上一篇的 ChatBot 演进为 Agent，代码层面变化不大，但行为质变——
+ * AI 从"只会说"变成了"能做"：
+ *
+ * - 定义工具（description + inputSchema + execute）→ tools/utility-tools.ts
+ * - streamText 传入 tools
+ * - 用 fullStream 替代 textStream，处理工具调用事件 → agent/loop.ts
+ * - while 循环支持多步执行 → agent/loop.ts
+ */
 import 'dotenv/config'
 import { type ModelMessage } from 'ai'
 import { createInterface } from 'node:readline'
@@ -16,6 +27,7 @@ const model = process.env.DEEPSEEK_API_KEY
   : createMockModel()
 
 const tools = { get_weather: weatherTool, calculator: calculatorTool }
+// 工具注册：streamText 通过 tools 参数暴露给模型
 
 const messages: ModelMessage[] = []
 

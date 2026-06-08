@@ -17,11 +17,17 @@ export type AskParams = {
 const MAX_STEPS = 10
 
 /**
- * 多步 Agent 循环。
+ * Agent Loop — ChatBot → Agent 的核心实现差异。
+ *
+ * 代码层面的四个关键变化：
+ * 1. 定义工具（description + inputSchema + execute）
+ * 2. streamText 加了 tools 参数
+ * 3. 用 fullStream 替代 textStream，处理 tool-call / tool-result 事件
+ * 4. while 循环，让模型能够多步执行
  *
  * 每次 iteration 调用一次 streamText（不设 stopWhen），模型可能：
- * 1. 直接输出文本 → 结束
- * 2. 调用工具 → 将 assistant / tool 消息写入 messages，进入下一轮
+ * - 直接输出文本 → 结束
+ * - 调用工具 → 将 assistant / tool 消息写入 messages，进入下一轮
  *
  * messages 由调用方持有并在循环内原地追加，以跨轮次保留完整对话历史。
  */
@@ -43,7 +49,7 @@ export async function ask({ model, tools, messages, system }: AskParams) {
     let hasToolCall = false
     let fullText = ''
 
-    // 消费 fullStream 以流式输出文本，并检测本步是否包含工具调用
+    // fullStream 替代 textStream：除 text-delta 外，还能收到 tool-call / tool-result
     for await (const part of result.fullStream) {
       switch (part.type) {
         case 'text-delta':
