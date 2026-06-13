@@ -54,7 +54,7 @@ export function recordCall(toolName: string, params: unknown) {
   history.push({
     toolName,
     timestamp: Date.now(),
-    argsHash: hash(stableStringify(params)),
+    argsHash: hashToolCall(toolName, params),
   })
 
   if (history.length > HISTORY_SIZE) history.shift()
