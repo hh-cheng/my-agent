@@ -48,10 +48,11 @@ export async function agentLoop(params: AgentLoopParams) {
     console.log(`\n--- Step ${step} ---`)
 
     let fullText = ''
-    let stepResponse: any
     let hasToolCall = false
     let shouldBreak = false
     let lastToolCall: { name: string; input: unknown } | null = null
+    let stepUsage: Awaited<ReturnType<typeof streamText>['usage']>
+    let stepResponse: Awaited<ReturnType<typeof streamText>['response']>
 
     for (let attempt = 1; ; attempt++) {
       try {
@@ -106,6 +107,7 @@ export async function agentLoop(params: AgentLoopParams) {
           }
         }
 
+        stepUsage = await result.usage
         stepResponse = await result.response
         break
       } catch (err) {
@@ -129,6 +131,20 @@ export async function agentLoop(params: AgentLoopParams) {
 
     messages.push(...stepResponse.messages)
 
+    //* Token 预算追踪
+    const take = stepUsage.inputTokens ?? 0
+    const out = stepUsage.outputTokens ?? 0
+    budget.used += take + out
+    const percentage = Math.round((budget.used / budget.limit) * 100)
+    console.log(
+      `  [预算] ${budget.used}→${budget.limit} tokens，使用率 ${percentage}%`,
+    )
+    if (budget.used > budget.limit) {
+      console.log('\n[预算超支，强制停止]')
+      break
+    }
+
+    //* 无工具调用 = 模型已给出最终回复
     if (!hasToolCall) {
       if (fullText) console.log()
       break
