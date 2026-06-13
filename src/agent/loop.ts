@@ -1,5 +1,6 @@
 import { streamText, type LanguageModel, type ModelMessage } from 'ai'
 
+import { calculateDelay, isRetryable, sleep } from './retry'
 import type { calculatorTool, weatherTool } from '../tools/utility-tools'
 import {
   detect,
@@ -46,76 +47,94 @@ export async function agentLoop(params: AgentLoopParams) {
   while (step++ < MAX_STEPS) {
     console.log(`\n--- Step ${step} ---`)
 
-    const result = streamText({
-      model,
-      system,
-      tools,
-      messages,
-      maxRetries: 0,
-      onError: () => {},
-    })
-
     let fullText = ''
+    let stepResponse: any
     let hasToolCall = false
     let shouldBreak = false
     let lastToolCall: { name: string; input: unknown } | null = null
 
-    // fullStream 同时暴露文本、工具调用和工具结果，便于逐步记录状态。
-    for await (const part of result.fullStream) {
-      switch (part.type) {
-        case 'text-delta': {
-          process.stdout.write(part.text)
-          fullText += part.text
-          break
-        }
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const result = streamText({
+          model,
+          system,
+          tools,
+          messages,
+          maxRetries: 0,
+          onError: () => {},
+        })
 
-        case 'tool-call': {
-          hasToolCall = true
-          lastToolCall = { name: part.toolName, input: part.input }
-          console.log(
-            `  [调用: ${part.toolName}(${JSON.stringify(part.input)})]`,
-          )
+        // fullStream 同时暴露文本、工具调用和工具结果，便于逐步记录状态。
+        for await (const part of result.fullStream) {
+          switch (part.type) {
+            case 'text-delta': {
+              process.stdout.write(part.text)
+              fullText += part.text
+              break
+            }
 
-          const detection = detect(part.toolName, part.input)
-          if (detection.stuck) {
-            console.log(`  ${detection.message}`)
-            if (detection.level === 'critical') {
-              shouldBreak = true
-            } else {
-              messages.push({
-                role: 'user',
-                content: `[系统提醒] ${detection.message}。请换一个思路解决问题，不要重复同样的操作。`,
-              })
+            case 'tool-call': {
+              hasToolCall = true
+              lastToolCall = { name: part.toolName, input: part.input }
+              console.log(
+                `  [调用: ${part.toolName}(${JSON.stringify(part.input)})]`,
+              )
+
+              const detection = detect(part.toolName, part.input)
+              if (detection.stuck) {
+                console.log(`  ${detection.message}`)
+                if (detection.level === 'critical') {
+                  shouldBreak = true
+                } else {
+                  messages.push({
+                    role: 'user',
+                    content: `[系统提醒] ${detection.message}。请换一个思路解决问题，不要重复同样的操作。`,
+                  })
+                }
+              }
+              recordCall(part.toolName, part.input)
+              break
+            }
+
+            case 'tool-result': {
+              console.log(`  [结果: ${JSON.stringify(part.output)}]`)
+              if (lastToolCall) {
+                recordResult(lastToolCall.name, lastToolCall.input, part.output)
+              }
+              break
             }
           }
-          recordCall(part.toolName, part.input)
-          break
         }
 
-        case 'tool-result': {
-          console.log(`  [结果: ${JSON.stringify(part.output)}]`)
-          if (lastToolCall) {
-            recordResult(lastToolCall.name, lastToolCall.input, part.output)
-          }
-          break
-        }
-      }
-
-      if (shouldBreak) {
-        console.log('\n[检测到循环调用， Agent 已停止]')
+        stepResponse = await result.response
         break
+      } catch (err) {
+        if (attempt >= MAX_RETRIES || !isRetryable(err)) throw err
+        const delay = calculateDelay(attempt)
+        console.log(
+          `  [重试] 第${attempt}/${MAX_RETRIES}次失败，${delay}ms后重试...`,
+        )
+        await sleep(delay)
+        fullText = ''
+        hasToolCall = false
+        shouldBreak = false
+        lastToolCall = null
       }
-
-      const stepResult = await result.response
-      messages.push(...stepResult.messages)
-
-      if (!hasToolCall) {
-        if (fullText) console.log()
-        break
-      }
-
-      console.log('  → 模型还在工作，继续下一步...')
     }
+
+    if (shouldBreak) {
+      console.log('\n[检测到循环调用， Agent 已停止]')
+      break
+    }
+
+    messages.push(...stepResponse.messages)
+
+    if (!hasToolCall) {
+      if (fullText) console.log()
+      break
+    }
+
+    console.log('  → 模型还在工作，继续下一步...')
   }
 
   if (step >= MAX_STEPS) {
