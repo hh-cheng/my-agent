@@ -14,8 +14,8 @@ import { type ModelMessage } from 'ai'
 import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
-import { ask } from './agent/loop'
 import { createMockModel } from './mock-model'
+import { ask, type BudgetState } from './agent/loop'
 import { calculatorTool, weatherTool } from './tools/utility-tools'
 
 const deepSeek = createDeepSeek({
@@ -26,10 +26,14 @@ const model = process.env.DEEPSEEK_API_KEY
   ? deepSeek.chat('deepseek-chat')
   : createMockModel()
 
-const tools = { get_weather: weatherTool, calculator: calculatorTool }
 // 工具注册：streamText 通过 tools 参数暴露给模型
+const tools = { get_weather: weatherTool, calculator: calculatorTool }
 
+// 消息历史
 const messages: ModelMessage[] = []
+
+// 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
+const budget: BudgetState = { used: 0, limit: 15_000 }
 
 const rl = createInterface({
   input: process.stdin,
