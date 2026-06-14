@@ -24,7 +24,7 @@ const deepSeek = createDeepSeek({
 })
 
 const model = process.env.DEEPSEEK_API_KEY
-  ? deepSeek.chat('deepseek-chat')
+  ? deepSeek.chat('deepseek-v4-flash')
   : createMockModel()
 
 // 工具注册：streamText 通过 tools 参数暴露给模型
@@ -45,7 +45,7 @@ for (const tool of toolRegistry.getAll()) {
 const messages: ModelMessage[] = []
 
 // 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
-const budget: BudgetState = { used: 0, limit: 15_000 }
+const budget: BudgetState = { used: 0, limit: 200_000 }
 
 const rl = createInterface({
   input: process.stdin,
