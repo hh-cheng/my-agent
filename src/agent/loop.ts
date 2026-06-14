@@ -1,7 +1,7 @@
 import { streamText, type LanguageModel, type ModelMessage } from 'ai'
 
+import type { ToolRegistry } from '@/tools/tool-registry'
 import { calculateDelay, isRetryable, sleep } from './retry'
-import type { calculatorTool, weatherTool } from '@/tools/utility-tools'
 import {
   detect,
   recordCall,
@@ -9,26 +9,22 @@ import {
   resetHistory,
 } from './loop-detection'
 
-export type AskTools = {
-  get_weather: typeof weatherTool
-  calculator: typeof calculatorTool
-}
-
 export type BudgetState = {
   used: number
   limit: number
 }
 
-export type AskParams = {
+export type LoopParams = {
   model: LanguageModel
-  tools: AskTools
+  tools: ToolRegistry
   messages: ModelMessage[]
   system: string
+  budget: BudgetState
 }
 
 export type AgentLoopParams = {
   model: LanguageModel
-  tools: AskTools
+  tools: ToolRegistry
   messages: ModelMessage[]
   system: string
   budget: BudgetState
@@ -59,9 +55,9 @@ export async function agentLoop(params: AgentLoopParams) {
         const result = streamText({
           model,
           system,
-          tools,
           messages,
           maxRetries: 0,
+          tools: tools.toAISDKFormat(),
           onError: () => {},
         })
 
@@ -78,7 +74,7 @@ export async function agentLoop(params: AgentLoopParams) {
               hasToolCall = true
               lastToolCall = { name: part.toolName, input: part.input }
               console.log(
-                `  [调用: ${part.toolName}(${JSON.stringify(part.input)})]`,
+                `[调用: ${part.toolName}(${JSON.stringify(part.input)})]`,
               )
 
               const detection = detect(part.toolName, part.input)
@@ -98,7 +94,13 @@ export async function agentLoop(params: AgentLoopParams) {
             }
 
             case 'tool-result': {
-              console.log(`  [结果: ${JSON.stringify(part.output)}]`)
+              const output =
+                typeof part.output === 'string'
+                  ? part.output
+                  : JSON.stringify(part.output, null, 2)
+              const preview =
+                output.length > 120 ? output.slice(0, 120) + '...' : output
+              console.log(`[结果: ${part.toolName}] ${preview}`)
               if (lastToolCall) {
                 recordResult(lastToolCall.name, lastToolCall.input, part.output)
               }
@@ -114,7 +116,7 @@ export async function agentLoop(params: AgentLoopParams) {
         if (attempt >= MAX_RETRIES || !isRetryable(err)) throw err
         const delay = calculateDelay(attempt)
         console.log(
-          `  [重试] 第${attempt}/${MAX_RETRIES}次失败，${delay}ms后重试...`,
+          `\n[重试] 第${attempt}/${MAX_RETRIES}次失败，${delay}ms后重试...`,
         )
         await sleep(delay)
         fullText = ''
@@ -137,7 +139,7 @@ export async function agentLoop(params: AgentLoopParams) {
     budget.used += take + out
     const percentage = Math.round((budget.used / budget.limit) * 100)
     console.log(
-      `  [预算] ${budget.used}→${budget.limit} tokens，使用率 ${percentage}%`,
+      `\n\n[预算] ${budget.used}→${budget.limit} tokens，使用率 ${percentage}%`,
     )
     if (budget.used > budget.limit) {
       console.log('\n[预算超支，强制停止]')
@@ -150,68 +152,9 @@ export async function agentLoop(params: AgentLoopParams) {
       break
     }
 
-    console.log('  → 模型还在工作，继续下一步...')
+    console.log('\n→ 模型还在工作，继续下一步...')
   }
 
-  if (step >= MAX_STEPS) {
-    console.log('\n[达到最大步数限制，强制停止]')
-  }
-}
-
-// 简化版 Agent Loop：模型没有工具调用时结束，有工具调用时追加消息并进入下一轮。
-export async function ask({ model, tools, messages, system }: AskParams) {
-  let step = 0
-
-  while (step < MAX_STEPS) {
-    step++
-    console.log(`\n--- Step ${step} ---`)
-
-    const result = streamText({
-      model,
-      system,
-      tools,
-      messages,
-      // 不设 stopWhen：由本循环决定何时结束，而非 SDK 自动跑完所有 tool step
-    })
-
-    let hasToolCall = false
-    let fullText = ''
-
-    // fullStream 替代 textStream：除 text-delta 外，还能收到 tool-call / tool-result
-    for await (const part of result.fullStream) {
-      switch (part.type) {
-        case 'text-delta':
-          process.stdout.write(part.text)
-          fullText += part.text
-          break
-
-        case 'tool-call':
-          hasToolCall = true
-          console.log(
-            `  [调用: ${part.toolName}(${JSON.stringify(part.input)})]`,
-          )
-          break
-
-        case 'tool-result':
-          console.log(`  [结果: ${JSON.stringify(part.output)}]`)
-          break
-      }
-    }
-
-    // response.messages 包含本步的 assistant 消息及 tool-result，供下一轮 model 读取
-    const stepMessages = await result.response
-    messages.push(...stepMessages.messages)
-
-    // 无工具调用 = 模型已给出最终回复
-    if (!hasToolCall) {
-      if (fullText) console.log()
-      break
-    }
-
-    console.log('  → 模型还在工作，继续下一步...')
-  }
-
-  // 防止工具调用死循环（如模型反复调用同一工具）
   if (step >= MAX_STEPS) {
     console.log('\n[达到最大步数限制，强制停止]')
   }

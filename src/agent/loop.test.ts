@@ -22,6 +22,10 @@ mock.module('./retry', () => ({
 
 const { agentLoop } = await import('./loop')
 
+const testTools = {
+  toAISDKFormat: () => ({}),
+}
+
 function streamResult(
   parts: unknown[],
   messages: ModelMessage[] = [],
@@ -85,7 +89,7 @@ describe('agentLoop API retry', () => {
 
     await agentLoop({
       model: {} as never,
-      tools: {} as never,
+      tools: testTools as never,
       messages,
       system: 'test',
       budget: { used: 0, limit: 100 },
@@ -116,7 +120,7 @@ describe('agentLoop API retry', () => {
 
     await agentLoop({
       model: {} as never,
-      tools: {} as never,
+      tools: testTools as never,
       messages,
       system: 'test',
       budget: { used: 0, limit: 100 },
@@ -137,7 +141,7 @@ describe('agentLoop API retry', () => {
     await expect(
       agentLoop({
         model: {} as never,
-        tools: {} as never,
+        tools: testTools as never,
         messages: [],
         system: 'test',
         budget: { used: 0, limit: 100 },
@@ -157,7 +161,7 @@ describe('agentLoop API retry', () => {
     await expect(
       agentLoop({
         model: {} as never,
-        tools: {} as never,
+        tools: testTools as never,
         messages: [],
         system: 'test',
         budget: { used: 0, limit: 100 },
@@ -228,7 +232,7 @@ describe('agentLoop budget guard', () => {
 
     await agentLoop({
       model: {} as never,
-      tools: {} as never,
+      tools: testTools as never,
       messages,
       system: 'test',
       budget,
@@ -264,7 +268,7 @@ describe('agentLoop budget guard', () => {
 
     await agentLoop({
       model: {} as never,
-      tools: {} as never,
+      tools: testTools as never,
       messages,
       system: 'test',
       budget,

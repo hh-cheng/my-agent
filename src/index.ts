@@ -14,9 +14,10 @@ import { type ModelMessage } from 'ai'
 import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
-import { ask, type BudgetState } from '@/agent/loop'
-import { createMockModel } from '@/mock/mock-model'
-import { calculatorTool, weatherTool } from '@/tools/utility-tools'
+import { allTools } from './tools/utility-tools'
+import { createMockModel } from './mock/mock-model'
+import { ToolRegistry } from './tools/tool-registry'
+import { agentLoop, type BudgetState } from './agent/loop'
 
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -27,7 +28,18 @@ const model = process.env.DEEPSEEK_API_KEY
   : createMockModel()
 
 // 工具注册：streamText 通过 tools 参数暴露给模型
-const tools = { get_weather: weatherTool, calculator: calculatorTool }
+const toolRegistry = new ToolRegistry()
+toolRegistry.registry(...allTools)
+
+console.log(`已注册 ${toolRegistry.getAll().length} 个工具`)
+for (const tool of toolRegistry.getAll()) {
+  const flags = [
+    tool.isReadOnly ? '只读' : '可写',
+    tool.isConcurrencySafe ? '可并发' : '串行',
+  ].join(', ')
+
+  console.log(`  - ${tool.name} (${flags})`)
+}
 
 // 消息历史
 const messages: ModelMessage[] = []
@@ -41,10 +53,12 @@ const rl = createInterface({
 })
 
 const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
-需要查询信息时，主动使用工具，不要编造数据。
+你有以下工具可用：get_weather, calculator, read_file, write_file, list_directory。
+需要查询信息或操作文件时，主动使用工具，不要编造数据。
+可以同时调用多个互不冲突的工具来提高效率。
 回答要简洁直接。`
 
-function promptUser() {
+function ask() {
   rl.question('\nYou: ', async (input) => {
     const trimmed = input.trim()
     if (!trimmed || trimmed.toLowerCase() === 'exit') {
@@ -55,11 +69,21 @@ function promptUser() {
 
     messages.push({ role: 'user', content: trimmed })
 
-    await ask({ model, tools, messages, system: SYSTEM })
+    await agentLoop({
+      model,
+      tools: toolRegistry,
+      messages,
+      system: SYSTEM,
+      budget,
+    })
 
-    promptUser()
+    ask()
   })
 }
 
-console.log('Super Agent v0.2 — Agent Loop (type "exit" to quit)\n')
-promptUser()
+console.log('Super Agent v0.4 — Tool System (type "exit" to quit)')
+console.log(
+  '试试："帮我看看当前目录"、"读取 package.json"、"测试并发"、"测试截断"\n',
+)
+
+ask()
