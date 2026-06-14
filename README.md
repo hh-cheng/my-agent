@@ -48,8 +48,9 @@ bun test
 ```text
 src/
   index.ts                    # v0.2 入口：注册模型、工具、消息历史并启动对话
-  mock-model.ts               # 无 API key 时使用的本地模拟模型
-  mock-index.ts               # v0.1 ChatBot 阶段示例
+  mock/
+    mock-model.ts             # 无 API key 时使用的本地模拟模型
+    mock-index.ts             # v0.1 ChatBot 阶段示例
   tools/
     utility-tools.ts          # weather / calculator 两个示例工具
   agent/
@@ -341,4 +342,3 @@ bun test
 - 把循环检测结果结构化返回给上层 UI
 - 增加更真实的工具，例如文件读写、搜索、数据库查询
 - 用 trace id 记录每一轮 step、tool-call、tool-result 和 token usage
-

@@ -3,8 +3,8 @@ import { streamText } from 'ai'
 import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
-import { createMockModel } from './mock-model'
-import { weatherTool, calculatorTool } from './tools/utility-tools'
+import { createMockModel } from '@/mock/mock-model'
+import { weatherTool, calculatorTool } from '@/tools/utility-tools'
 
 type ModelMessage = NonNullable<
   Parameters<typeof streamText>[0]['messages']

@@ -1,7 +1,7 @@
 import { streamText, type LanguageModel, type ModelMessage } from 'ai'
 
 import { calculateDelay, isRetryable, sleep } from './retry'
-import type { calculatorTool, weatherTool } from '../tools/utility-tools'
+import type { calculatorTool, weatherTool } from '@/tools/utility-tools'
 import {
   detect,
   recordCall,

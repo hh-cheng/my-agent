@@ -14,9 +14,9 @@ import { type ModelMessage } from 'ai'
 import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
-import { createMockModel } from './mock-model'
-import { ask, type BudgetState } from './agent/loop'
-import { calculatorTool, weatherTool } from './tools/utility-tools'
+import { ask, type BudgetState } from '@/agent/loop'
+import { createMockModel } from '@/mock/mock-model'
+import { calculatorTool, weatherTool } from '@/tools/utility-tools'
 
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
