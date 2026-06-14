@@ -1,5 +1,6 @@
+import { $ } from 'bun'
 import { join, resolve } from 'node:path'
-import { readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 
 import type { ToolDefinition } from './tool-registry'
 
@@ -133,10 +134,263 @@ export const listDirectoryTool: ToolDefinition = {
   },
 }
 
+export const editFileTool: ToolDefinition = {
+  name: 'edit_file',
+  description:
+    '精确替换文件中的指定内容。用 old_string 定位要替换的文本，用 new_string 替换它。不是全量覆写——只改你指定的部分',
+  isReadOnly: false,
+  isConcurrencySafe: false,
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '文件路径' },
+      old_string: {
+        type: 'string',
+        description: '要被替换的原始文本（必须精确匹配）',
+      },
+      new_string: { type: 'string', description: '替换后的新文本' },
+    },
+    required: ['path', 'old_string', 'new_string'],
+    additionalProperties: false,
+  },
+  execute: async (params: {
+    path: string
+    old_string: string
+    new_string: string
+  }) => {
+    const { path, old_string, new_string } = params
+    const absolutePath = resolve(path)
+    if (!existsSync(absolutePath)) return `文件不存在: ${absolutePath}`
+
+    const content = await Bun.file(absolutePath).text()
+    const count = content.split(old_string).length - 1
+
+    if (count === 0) {
+      return '未找到匹配内容。请检查 old_string 是否与文件中的文本完全一致（包括空格和换行）'
+    }
+    if (count > 1) {
+      return `找到 ${count} 处匹配，请提供更多上下文让 old_string 唯一`
+    }
+
+    const updated = content.replace(old_string, new_string)
+    await Bun.write(absolutePath, updated)
+    return `已替换 ${path} 中的内容（${old_string.length} → ${new_string.length} 字符）`
+  },
+}
+
+export const globTool: ToolDefinition = {
+  name: 'glob',
+  description:
+    '按模式搜索文件。支持 * 和 ** 通配符，如 "src/**/*.ts" 匹配 src 下所有 TypeScript 文件',
+  isConcurrencySafe: true,
+  isReadOnly: true,
+  parameters: {
+    type: 'object',
+    properties: {
+      pattern: {
+        type: 'string',
+        description: '搜索模式，如 "**/*.ts"、"src/*.json"',
+      },
+      path: { type: 'string', description: '搜索起始目录，默认当前目录' },
+    },
+    required: ['pattern'],
+    additionalProperties: false,
+  },
+  execute: async ({
+    pattern,
+    path = '.',
+  }: {
+    pattern: string
+    path: string
+  }) => {
+    const absolutePath = resolve(path)
+
+    try {
+      if (!existsSync(absolutePath)) {
+        return `搜索路径不存在: ${absolutePath}`
+      }
+      if (!statSync(absolutePath).isDirectory()) {
+        return `搜索路径不是目录: ${absolutePath}`
+      }
+
+      const glob = new Bun.Glob(pattern)
+      const matches = []
+
+      for await (const match of glob.scan({
+        cwd: absolutePath,
+        dot: true,
+        onlyFiles: false,
+      })) {
+        matches.push(match)
+      }
+
+      matches.sort((a, b) => a.localeCompare(b))
+
+      if (matches.length === 0) {
+        return `未找到匹配文件: ${pattern} (${absolutePath})`
+      }
+
+      const limit = 200
+      const shown = matches.slice(0, limit)
+      const suffix =
+        matches.length > limit ? `\n... 还有 ${matches.length - limit} 项` : ''
+
+      return `匹配结果: ${pattern} (${absolutePath})\n${shown.join('\n')}${suffix}`
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `glob 搜索失败: ${pattern} (${absolutePath})\n${message}`
+    }
+  },
+}
+
+export const grepTool: ToolDefinition = {
+  name: 'grep',
+  description: '在文件中搜索匹配指定模式的内容。返回匹配的行号和内容',
+  isReadOnly: true,
+  isConcurrencySafe: true,
+  maxResultChars: 3000,
+  parameters: {
+    type: 'object',
+    properties: {
+      pattern: { type: 'string', description: '搜索模式（正则表达式）' },
+      path: {
+        type: 'string',
+        description: '搜索路径（文件或目录），默认当前目录',
+      },
+    },
+    required: ['pattern'],
+    additionalProperties: false,
+  },
+  execute: async ({
+    pattern,
+    path = '.',
+  }: {
+    pattern: string
+    path?: string
+  }) => {
+    const absolutePath = resolve(path)
+    const ignoredDirs = new Set([
+      '.git',
+      'node_modules',
+      'dist',
+      'build',
+      '.next',
+      'coverage',
+      'tmp',
+      'temp',
+    ])
+
+    try {
+      if (!existsSync(absolutePath)) {
+        return `搜索路径不存在: ${absolutePath}`
+      }
+
+      const regex = new RegExp(pattern)
+      const files: string[] = []
+      const stat = statSync(absolutePath)
+
+      if (stat.isFile()) {
+        files.push(absolutePath)
+      } else if (stat.isDirectory()) {
+        const glob = new Bun.Glob('**/*')
+        for await (const file of glob.scan({
+          cwd: absolutePath,
+          absolute: true,
+          dot: true,
+          onlyFiles: true,
+        })) {
+          const parts = file.split(/[\\/]/)
+          if (parts.some((part) => ignoredDirs.has(part))) continue
+          files.push(file)
+        }
+      } else {
+        return `搜索路径不是文件或目录: ${absolutePath}`
+      }
+
+      files.sort((a, b) => a.localeCompare(b))
+
+      const maxMatches = 100
+      const matches: string[] = []
+      let totalMatches = 0
+
+      for (const file of files) {
+        let content: string
+        try {
+          content = await Bun.file(file).text()
+        } catch {
+          continue
+        }
+
+        const lines = content.split(/\r?\n/)
+        for (const [index, line] of lines.entries()) {
+          regex.lastIndex = 0
+          if (!regex.test(line)) continue
+
+          totalMatches++
+          if (matches.length < maxMatches) {
+            matches.push(`${file}:${index + 1}: ${line}`)
+          }
+        }
+      }
+
+      if (totalMatches === 0) {
+        return `未找到匹配内容: ${pattern} (${absolutePath})`
+      }
+
+      const suffix =
+        totalMatches > maxMatches
+          ? `\n... 还有 ${totalMatches - maxMatches} 处匹配`
+          : ''
+
+      return `搜索结果: ${pattern} (${absolutePath})\n${matches.join('\n')}${suffix}`
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `grep 搜索失败: ${pattern} (${absolutePath})\n${message}`
+    }
+  },
+}
+
+export const bashTool: ToolDefinition = {
+  name: 'bash',
+  description:
+    '执行 shell 命令并返回输出。适合运行脚本、检查环境、执行构建等操作',
+  isReadOnly: false,
+  isConcurrencySafe: false,
+  maxResultChars: 3000,
+  parameters: {
+    type: 'object',
+    properties: {
+      command: { type: 'string', description: '要执行的 shell 命令' },
+    },
+    required: ['command'],
+    additionalProperties: false,
+  },
+  execute: async ({ command }: { command: string }) => {
+    try {
+      const result = await $`sh -c ${command}`.quiet().nothrow()
+      const stdout = result.stdout.toString()
+      const stderr = result.stderr.toString()
+      const sections = [`exitCode: ${result.exitCode}`]
+
+      if (stdout) sections.push(`stdout:\n${stdout.trimEnd()}`)
+      if (stderr) sections.push(`stderr:\n${stderr.trimEnd()}`)
+
+      return sections.join('\n\n')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `命令执行失败: ${command}\n${message}`
+    }
+  },
+}
+
 export const allTools: ToolDefinition[] = [
   weatherTool,
   calculatorTool,
   readFileTool,
   writeFileTool,
   listDirectoryTool,
+  editFileTool,
+  globTool,
+  grepTool,
+  bashTool,
 ]
