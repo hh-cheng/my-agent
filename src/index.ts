@@ -18,6 +18,7 @@ import { allTools } from './tools/utility-tools'
 import { createMockModel } from './mock/mock-model'
 import { ToolRegistry } from './tools/tool-registry'
 import { agentLoop, type BudgetState } from './agent/loop'
+import { pickSearchTool, webFetchTool } from './tools/search-tools'
 
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -30,6 +31,7 @@ const model = process.env.DEEPSEEK_API_KEY
 // 工具注册：streamText 通过 tools 参数暴露给模型
 const toolRegistry = new ToolRegistry()
 toolRegistry.registry(...allTools)
+toolRegistry.registry(pickSearchTool(), webFetchTool)
 
 console.log(`已注册 ${toolRegistry.getAll().length} 个工具`)
 for (const tool of toolRegistry.getAll()) {
@@ -53,7 +55,6 @@ const rl = createInterface({
 })
 
 const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
-你有以下工具可用：get_weather, calculator, read_file, write_file, list_directory。
 需要查询信息或操作文件时，主动使用工具，不要编造数据。
 可以同时调用多个互不冲突的工具来提高效率。
 回答要简洁直接。`

@@ -36,6 +36,14 @@ bun run dev
 DEEPSEEK_API_KEY=你的_key bun run dev
 ```
 
+也可以复制示例环境变量文件后再填写：
+
+```bash
+cp .env.example .env
+```
+
+联网搜索工具是可选能力。配置 `TAVILY_API_KEY` 后会优先使用 Tavily；如果没有 Tavily 但配置了 `SERPER_API_KEY`，会回退到 Serper。详细说明见 [docs/search-tools.md](docs/search-tools.md)。
+
 退出：
 
 ```text
@@ -59,6 +67,7 @@ src/
   tools/
     tool-registry.ts          # 工具注册、结果截断、并发控制
     utility-tools.ts          # weather / calculator / 文件读写 / 目录列表工具
+    search-tools.ts           # Tavily / Serper 搜索和网页抓取工具
   agent/
     loop.ts                   # Agent Loop 核心实现
     retry.ts                  # API 失败重试策略
@@ -106,13 +115,23 @@ while (step < MAX_STEPS) {
 
 ## 第二章：Tool System
 
-工具在 [src/tools/utility-tools.ts](src/tools/utility-tools.ts) 里定义。当前包括：
+工具主要在 [src/tools/utility-tools.ts](src/tools/utility-tools.ts) 和 [src/tools/search-tools.ts](src/tools/search-tools.ts) 里定义。当前包括：
 
 - `get_weather`：查询 mock 天气
 - `calculator`：计算数学表达式
 - `read_file`：读取文件内容
 - `write_file`：写入文件
 - `list_directory`：列出目录内容
+- `edit_file`：精确替换文件中的一段内容
+- `glob`：按通配符模式搜索文件
+- `grep`：在文件中搜索正则匹配内容
+- `bash`：执行 shell 命令并返回输出
+- `fetch_url`：抓取 URL 并提取纯文本
+- `start_preview`：启动 `app/` 目录的本地预览服务器
+- `web_search`：联网搜索，自动在 Tavily / Serper 间选择
+- `web_fetch`：抓取指定网页并转换为 Markdown
+
+联网搜索工具需要额外配置 API key，见 [docs/search-tools.md](docs/search-tools.md)。
 
 一个工具由三部分组成：
 
@@ -166,6 +185,22 @@ streamText({
 - 把项目内部的 `ToolDefinition` 转成 AI SDK 的 tool 格式
 - 按 `maxResultChars` 截断工具结果，避免一次工具调用把上下文撑爆
 - 按 `isConcurrencySafe` 控制工具并发，避免读写冲突
+
+### 搜索工具选择
+
+入口 [src/index.ts](src/index.ts) 会注册：
+
+```ts
+toolRegistry.registry(pickSearchTool(), webFetchTool)
+```
+
+`pickSearchTool()` 的选择规则是：
+
+1. 配置了 `TAVILY_API_KEY`：注册 Tavily 版 `web_search`
+2. 否则配置了 `SERPER_API_KEY`：注册 Serper 版 `web_search`
+3. 两者都没有：仍注册 Tavily 版 `web_search`，但调用时会提示缺少 `TAVILY_API_KEY`
+
+`web_fetch` 不需要 API key，会直接抓取给定 URL，并用 Turndown 把 HTML 转成 Markdown。
 
 ## Tool Result 截断
 
@@ -441,8 +476,7 @@ bun test
 
 ## 可以继续扩展的方向
 
-- 把入口从 `ask` 切换到 `agentLoop`，启用完整防护能力
 - 给工具执行增加超时控制
 - 把循环检测结果结构化返回给上层 UI
-- 增加更真实的工具，例如文件读写、搜索、数据库查询
+- 增加更真实的工具，例如数据库查询、浏览器自动化、长期记忆
 - 用 trace id 记录每一轮 step、tool-call、tool-result 和 token usage
