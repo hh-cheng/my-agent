@@ -1,5 +1,7 @@
 import { jsonSchema, type streamText } from 'ai'
 
+import type { MCPClient } from '@/mcp/mcp-client'
+
 export interface ToolDefinition {
   //* 给 LLM 看的元信息
   name: string
@@ -38,6 +40,8 @@ export class ToolRegistry {
   private concurrentCount = 0 // 当前共享锁持有数
   private waitQueue: Array<(ipt: unknown) => void> = [] // 阻塞等待中的 resolve 函数
 
+  private mcpClients: Array<MCPClient> = []
+
   // 获取共享锁：只要没有人独占就能拿，多个只读工具可以同时持有
   private async acquireConcurrent() {
     while (this.exclusiveLock) {
@@ -70,7 +74,7 @@ export class ToolRegistry {
     for (const resolve of waiting) resolve(void 0)
   }
 
-  registry(...tools: ToolDefinition[]) {
+  register(...tools: ToolDefinition[]) {
     for (const tool of tools) {
       this.tools.set(tool.name, tool)
     }
@@ -124,5 +128,46 @@ export class ToolRegistry {
     }
 
     return result
+  }
+
+  //* mcp 相关
+  async registerMCPServer(
+    serverName: string,
+    client: MCPClient,
+  ): Promise<string[]> {
+    await client.connect()
+    this.mcpClients.push(client)
+
+    const tools = await client.listTools()
+    const registered: string[] = []
+
+    for (const tool of tools) {
+      const prefixedName = `mcp__${serverName}__${tool.name}`
+      if (this.tools.has(prefixedName)) continue
+
+      const toolClient = client
+      const originalName = tool.name
+
+      this.register({
+        name: prefixedName,
+        description: `[MCP:${serverName}] ${tool.description}`,
+        parameters: tool.inputSchema,
+        isConcurrencySafe: true,
+        isReadOnly: true,
+        maxResultChars: 3000,
+        execute: async (ipt) => {
+          return toolClient.callTool(originalName, ipt)
+        },
+      })
+
+      registered.push(prefixedName)
+    }
+
+    return registered
+  }
+
+  async closeAllMCP() {
+    for (const client of this.mcpClients) await client.close()
+    this.mcpClients = []
   }
 }
