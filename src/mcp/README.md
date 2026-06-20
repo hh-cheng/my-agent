@@ -123,3 +123,48 @@ await toolRegistry.registerMCPServer('someService', client)
 ```
 
 注册后，工具会以 `mcp__someService__toolName` 的形式暴露给 Agent。
+
+## 生产环境 SDK 示例
+
+[mcp-client-prod.ts](./mcp-client-prod.ts) 是一个不接入 Agent Loop 的生产环境示例。它使用官方 TypeScript SDK，而不是手写 stdio / JSON-RPC 客户端：
+
+```ts
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+```
+
+这个示例保留了和当前 GitHub MCP 一样的运行方式：
+
+```ts
+new StdioClientTransport({
+  command: 'bunx',
+  args: ['-y', '@modelcontextprotocol/server-github'],
+  env: {
+    ...getDefaultEnvironment(),
+    GITHUB_PERSONAL_ACCESS_TOKEN: githubToken,
+  },
+  stderr: 'pipe',
+})
+```
+
+运行方式：
+
+```bash
+bun src/mcp/mcp-client-prod.ts
+```
+
+它会做三件事：
+
+1. 用 SDK `Client.connect()` 完成 MCP 初始化握手。
+2. 调用 `client.listTools()` 打印 GitHub MCP 暴露的工具。
+3. 调用 `client.callTool()` 演示一次 `search_repositories`。
+
+生产环境更推荐这种写法，原因是 SDK 已经处理了这些协议细节：
+
+- MCP 初始化握手和能力协商。
+- stdio 消息分帧和 JSON-RPC request / response 匹配。
+- 请求级 `timeout` 和 `AbortSignal`。
+- 标准错误类型和协议兼容性。
+- resources、prompts、tools 等 MCP primitives 的高层 API。
+
+当前 [mcp-client.ts](./mcp-client.ts) 仍然适合保留为教学版实现，用来理解 MCP 的底层工作方式。如果要把生产 SDK 接入现有 Agent，只需要把 `ToolRegistry.registerMCPServer()` 依赖的 client 接口适配到 SDK 的 `listTools()` 和 `callTool()`，Agent Loop 本身不需要知道底层 transport 是手写的还是 SDK。
