@@ -18,6 +18,7 @@ import { MCPClient } from './mcp/mcp-client'
 import { allTools } from './tools/utility-tools'
 import { createMockModel } from './mock/mock-model'
 import { ToolRegistry } from './tools/tool-registry'
+import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
 
@@ -33,6 +34,7 @@ const model = process.env.DEEPSEEK_API_KEY
 const toolRegistry = new ToolRegistry()
 toolRegistry.register(...allTools)
 toolRegistry.register(pickSearchTool(), webFetchTool)
+toolRegistry.register(createToolSearchTool(toolRegistry))
 
 console.log(`已注册 ${toolRegistry.getAll().length} 个工具`)
 for (const tool of toolRegistry.getAll()) {
@@ -82,6 +84,7 @@ async function connectMCP() {
 async function main() {
   await connectMCP()
 
+  //* 工具统计
   console.log(`\n已注册 ${toolRegistry.getAll().length} 个工具: `)
   for (const tool of toolRegistry.getAll()) {
     const isMCP = tool.name.startsWith('mcp__')
@@ -93,17 +96,35 @@ async function main() {
     console.log(`  - ${tool.name} (${flags})`)
   }
 
+  const allCount = toolRegistry.getAll().length
+  const activeTools = toolRegistry.getActiveTools()
+  const estimate = toolRegistry.countTokenEstimate()
+
+  console.log('\n=== 工具统计 ===')
+  console.log(`全部工具：${allCount}个`)
+  console.log(`活跃工具：${activeTools.length}个`)
+  console.log(`延迟工具：${estimate.deferred}个`)
+  console.log(
+    `Token 估算：~${estimate.active} (活跃) + ~${estimate.deferred} (延迟)`,
+  )
+
   // 消息历史
   const messages: ModelMessage[] = []
   const rl = createInterface({ input: process.stdin, output: process.stdout })
+  let rlClosed = false
+  rl.on('close', () => {
+    rlClosed = true
+  })
 
   const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
 你有内置工具和 MCP 工具可用。MCP 工具以 mcp__ 开头，如 mcp__github__list_issues。
-需要查询 GitHub 信息时，使用 mcp__github__ 前缀的工具。
+需要查询 GitHub 信息时，如果对应的 mcp__github__ 工具尚未激活，先调用 tool_search 获取完整定义。
 需要操作本地文件时，使用内置工具。
 回答要简洁直接。`
 
   const ask = () => {
+    if (rlClosed) return
+
     rl.question('\nYou: ', async (ipt) => {
       const trimmed = ipt.trim()
       if (!trimmed || trimmed.toLowerCase() === 'exit') {
@@ -120,7 +141,7 @@ async function main() {
         system: SYSTEM,
         budget,
       })
-      ask()
+      if (!rlClosed) ask()
     })
   }
 

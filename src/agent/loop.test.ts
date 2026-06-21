@@ -8,6 +8,7 @@ const isRetryableMock = mock(
 const calculateDelayMock = mock(() => 0)
 const sleepMock = mock(async () => {})
 const originalConsoleLog = console.log
+const originalConsoleError = console.error
 const originalStdoutWrite = process.stdout.write
 
 mock.module('ai', () => ({
@@ -24,6 +25,7 @@ const { agentLoop } = await import('./loop')
 
 const testTools = {
   toAISDKFormat: () => ({}),
+  getDeferredToolSummary: () => '',
 }
 
 function streamResult(
@@ -53,6 +55,7 @@ function failingStream(error: Error) {
 describe('agentLoop API retry', () => {
   beforeEach(() => {
     console.log = mock(() => {})
+    console.error = mock(() => {})
     process.stdout.write = mock(() => true) as typeof process.stdout.write
 
     streamTextMock.mockReset()
@@ -69,6 +72,7 @@ describe('agentLoop API retry', () => {
 
   afterEach(() => {
     console.log = originalConsoleLog
+    console.error = originalConsoleError
     process.stdout.write = originalStdoutWrite
   })
 
@@ -177,6 +181,7 @@ describe('agentLoop API retry', () => {
 describe('agentLoop budget guard', () => {
   beforeEach(() => {
     console.log = mock(() => {})
+    console.error = mock(() => {})
     process.stdout.write = mock(() => true) as typeof process.stdout.write
 
     streamTextMock.mockReset()
@@ -193,6 +198,7 @@ describe('agentLoop budget guard', () => {
 
   afterEach(() => {
     console.log = originalConsoleLog
+    console.error = originalConsoleError
     process.stdout.write = originalStdoutWrite
   })
 

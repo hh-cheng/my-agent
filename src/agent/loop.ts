@@ -54,11 +54,13 @@ export async function agentLoop(params: AgentLoopParams) {
       try {
         const result = streamText({
           model,
-          system,
+          system: system + tools.getDeferredToolSummary(),
           messages,
           maxRetries: 0,
           tools: tools.toAISDKFormat(),
-          onError: () => {},
+          onError: ({ error }) => {
+            console.error('[AI SDK stream error]', error)
+          },
         })
 
         // fullStream 同时暴露文本、工具调用和工具结果，便于逐步记录状态。
