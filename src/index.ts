@@ -153,10 +153,27 @@ async function main() {
   //* 交互循环
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   let rlClosed = false
+  let shuttingDown = false
   rl.on('close', () => {
     rlClosed = true
   })
 
+  //* 退出处理
+  const shutdown = async () => {
+    if (shuttingDown) return
+    shuttingDown = true
+
+    if (!rlClosed) rl.close()
+    await toolRegistry.closeAllMCP()
+  }
+
+  process.once('SIGINT', async () => {
+    console.log()
+    await shutdown()
+    process.exit(130)
+  })
+
+  //* 问答循环
   const ask = () => {
     if (rlClosed) return
 
@@ -164,7 +181,7 @@ async function main() {
       const trimmed = ipt.trim()
       if (!trimmed || trimmed.toLowerCase() === 'exit') {
         console.log('Bye!')
-        rl.close()
+        await shutdown()
         return
       }
 

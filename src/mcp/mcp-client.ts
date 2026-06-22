@@ -148,8 +148,32 @@ export class MCPClient {
   }
 
   async close() {
-    if (this.rl) this.rl.close()
-    if (this.process) this.process.kill()
+    if (this.rl) {
+      this.rl.close()
+      this.rl = null
+    }
+
+    if (!this.process) return
+
+    const child = this.process
+    this.process = null
+    child.stdin?.end()
+
+    if (child.exitCode !== null || child.signalCode !== null) return
+
+    await new Promise<void>((resolve) => {
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL')
+        resolve()
+      }, 3000)
+
+      child.once('exit', () => {
+        clearTimeout(timeout)
+        resolve()
+      })
+
+      child.kill('SIGTERM')
+    })
   }
 
   private rejectAllPending(err: Error) {
