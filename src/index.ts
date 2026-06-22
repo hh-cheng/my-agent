@@ -15,12 +15,20 @@ import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
 import { MCPClient } from './mcp/mcp-client'
+import { SessionStore } from './session/store'
 import { allTools } from './tools/utility-tools'
 import { createMockModel } from './mock/mock-model'
 import { ToolRegistry } from './tools/tool-registry'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
+import { PromptBuilder, PromptContext } from './context/prompt-builder'
+import {
+  coreRules,
+  deferredTools,
+  sessionContext,
+  toolGuide,
+} from './context/prompts'
 
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -109,18 +117,45 @@ async function main() {
   )
 
   // 消息历史
-  const messages: ModelMessage[] = []
+  const isContinue = process.argv.includes('--continue')
+  const sessionId = 'default'
+  const store = new SessionStore(sessionId)
+
+  let messages: ModelMessage[] = []
+  if (isContinue && store.exists()) {
+    messages = store.load()
+    console.log(
+      `\n[Session] 恢复会话 "${sessionId}"，${messages.length} 条历史消息`,
+    )
+  } else {
+    console.log(`\n[Session] 新会话 "${sessionId}"`)
+  }
+
+  //* 组装 system prompt
+  const builder = new PromptBuilder()
+    .pipe('coreRules', coreRules())
+    .pipe('toolGuide', toolGuide())
+    .pipe('deferredTools', deferredTools())
+    .pipe('sessionContext', sessionContext())
+
+  const promptCtx: PromptContext = {
+    sessionId,
+    sessionMessageCount: messages.length,
+    toolCount: toolRegistry.getActiveTools().length,
+    deferredToolSummary: toolRegistry.getDeferredToolSummary(),
+  }
+
+  const SYSTEM = builder.build(promptCtx)
+
+  // Debug
+  builder.debug(promptCtx)
+
+  //* 交互循环
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   let rlClosed = false
   rl.on('close', () => {
     rlClosed = true
   })
-
-  const SYSTEM = `你是 Super Agent，一个有工具调用能力的 AI 助手。
-你有内置工具和 MCP 工具可用。MCP 工具以 mcp__ 开头，如 mcp__github__list_issues。
-需要查询 GitHub 信息时，如果对应的 mcp__github__ 工具尚未激活，先调用 tool_search 获取完整定义。
-需要操作本地文件时，使用内置工具。
-回答要简洁直接。`
 
   const ask = () => {
     if (rlClosed) return
@@ -133,7 +168,12 @@ async function main() {
         return
       }
 
-      messages.push({ role: 'user', content: trimmed })
+      const beforeCount = messages.length
+      const userMessage = {
+        role: 'user',
+        content: trimmed,
+      } satisfies ModelMessage
+      messages.push(userMessage)
       await agentLoop({
         model,
         tools: toolRegistry,
@@ -141,12 +181,13 @@ async function main() {
         system: SYSTEM,
         budget,
       })
+      store.appendAll(messages.slice(beforeCount))
       if (!rlClosed) ask()
     })
   }
 
-  console.log('Super Agent v0.5 — MCP (type "exit" to quit)')
-  console.log('试试："查看 vercel/ai 的 issues"、"搜索 MCP 相关的仓库"\n')
+  console.log('Super Agent v0.7 — Session + Prompt Pipe (type "exit" to quit)')
+  console.log('对话会自动保存。用 bun run continue 恢复上次对话。\n')
   ask()
 }
 

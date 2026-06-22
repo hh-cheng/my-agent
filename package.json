@@ -6,6 +6,7 @@
   "scripts": {
     "prepare": "husky",
     "dev": "bun src/index.ts",
+    "continue": "bun src/index.ts --continue",
     "test": "bun test",
     "watch": "bun --watch src/index.ts"
   },

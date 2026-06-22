@@ -1,0 +1,31 @@
+import type { PipeFn } from './prompt-builder'
+
+export function coreRules(): PipeFn {
+  return () => `你是 Super Agent，一个有工具调用能力的 AI 助手。
+你的行为准则：
+- 先读文件再修改，不要凭记忆编辑
+- 不要加没被要求的功能
+- 工具调用失败时，换一个思路而不是重复同样的操作
+- 回答要简洁直接`
+}
+
+export function toolGuide(): PipeFn {
+  return (ctx) => {
+    if (ctx.toolCount === 0) return null
+    return `你有 ${ctx.toolCount} 个工具可用。需要操作本地文件时使用内置工具，需要访问外部服务时使用 MCP 工具。`
+  }
+}
+
+export function deferredTools(): PipeFn {
+  return (ctx) => {
+    if (!ctx.deferredToolSummary) return null
+    return `如果你需要的工具不在当前列表中，使用 tool_search 工具搜索。${ctx.deferredToolSummary}`
+  }
+}
+
+export function sessionContext(): PipeFn {
+  return (ctx) => {
+    if (ctx.sessionMessageCount === 0) return null
+    return `[会话信息] 当前会话 ${ctx.sessionId}，已有 ${ctx.sessionMessageCount} 条历史消息。`
+  }
+}
