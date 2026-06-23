@@ -23,6 +23,7 @@ import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
 import { PromptBuilder, PromptContext } from './context/prompt-builder'
+import { microCompact, summarize, estimateTokens } from './context/compressor'
 import {
   coreRules,
   deferredTools,
@@ -92,7 +93,7 @@ async function connectMCP() {
 async function main() {
   await connectMCP()
 
-  //* 工具统计
+  //* === 工具统计 ===
   console.log(`\n已注册 ${toolRegistry.getAll().length} 个工具: `)
   for (const tool of toolRegistry.getAll()) {
     const isMCP = tool.name.startsWith('mcp__')
@@ -116,7 +117,7 @@ async function main() {
     `Token 估算：~${estimate.active} (活跃) + ~${estimate.deferred} (延迟)`,
   )
 
-  // 消息历史
+  //* === 消息历史 ===
   const isContinue = process.argv.includes('--continue')
   const sessionId = 'default'
   const store = new SessionStore(sessionId)
@@ -131,7 +132,41 @@ async function main() {
     console.log(`\n[Session] 新会话 "${sessionId}"`)
   }
 
-  //* 组装 system prompt
+  //* === 对话开始前压缩 ===
+  let summary = ''
+
+  const beforeTokens = estimateTokens(messages)
+  console.log(`\n[压缩前] ${messages.length} 条消息，~${beforeTokens} tokens`)
+
+  // 1. Layer 1: MicroCompact
+  const mc = microCompact(messages)
+  messages = mc.messages as ModelMessage[]
+  const afterMCTokens = estimateTokens(messages)
+  console.log(
+    `[Layer 1: MicroCompact] 清理了 ${mc.cleared} 个工具结果，~${afterMCTokens} tokens`,
+  )
+
+  // 2. Layer 2: Summarize
+  const compResult = await summarize(model, messages, summary)
+  messages = compResult.messages
+  summary = compResult.summary
+  const afterSummarizeTokens = estimateTokens(messages)
+  if (compResult.compressedCount > 0) {
+    console.log(
+      `[Layer 2: Summarization] 压缩了 ${compResult.compressedCount} 条消息, ~${afterSummarizeTokens} tokens`,
+    )
+    console.log(`[摘要预览] ${summary.slice(0, 150)}...`)
+  } else {
+    console.log(`[Layer 2: Summarization] 未触发（消息量不够）`)
+  }
+
+  console.log(
+    `[压缩后] ${messages.length} 条消息, ~${afterSummarizeTokens} tokens (节省 ${beforeTokens - afterSummarizeTokens} tokens)\n`,
+  )
+
+  messages = []
+
+  //* === 组装 system prompt ===
   const builder = new PromptBuilder()
     .pipe('coreRules', coreRules())
     .pipe('toolGuide', toolGuide())
@@ -150,7 +185,7 @@ async function main() {
   // Debug
   builder.debug(promptCtx)
 
-  //* 交互循环
+  //* === 交互循环 ===
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   let rlClosed = false
   let shuttingDown = false
@@ -158,7 +193,7 @@ async function main() {
     rlClosed = true
   })
 
-  //* 退出处理
+  //* === 退出处理 ===
   const shutdown = async () => {
     if (shuttingDown) return
     shuttingDown = true
@@ -173,7 +208,7 @@ async function main() {
     process.exit(130)
   })
 
-  //* 问答循环
+  //* === 问答循环 ===
   const ask = () => {
     if (rlClosed) return
 
@@ -191,6 +226,7 @@ async function main() {
         content: trimmed,
       } satisfies ModelMessage
       messages.push(userMessage)
+
       await agentLoop({
         model,
         tools: toolRegistry,
@@ -198,7 +234,30 @@ async function main() {
         system: SYSTEM,
         budget,
       })
+
       store.appendAll(messages.slice(beforeCount))
+
+      //* 每轮对话结束后按需压缩
+      const currentTokens = estimateTokens(messages)
+      if (currentTokens > 4000) {
+        console.log(`\n[压缩检查] ~${currentTokens} tokens，触发压缩...`)
+        const mc2 = microCompact(messages)
+        messages = mc2.messages as ModelMessage[]
+        if (mc2.cleared > 0)
+          console.log(
+            `[Layer 1: MicroCompact] 清理了 ${mc2.cleared} 个工具结果`,
+          )
+
+        const summarizeResult = await summarize(model, messages, summary)
+        if (summarizeResult.compressedCount > 0) {
+          messages = summarizeResult.messages
+          summary = summarizeResult.summary
+          console.log(
+            `[Layer 2: Summarization] 压缩了 ${summarizeResult.compressedCount} 条消息, ~${estimateTokens(messages)} tokens`,
+          )
+        }
+      }
+
       if (!rlClosed) ask()
     })
   }
