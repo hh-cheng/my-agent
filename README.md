@@ -14,6 +14,7 @@
 
 - 第一章：Agent Loop 已完成
 - 第二章：Tool System 实现中
+- 第三章：Context Engineering 已实现基础版
 
 ## 快速开始
 
@@ -68,6 +69,14 @@ src/
     tool-registry.ts          # 工具注册、结果截断、并发控制
     utility-tools.ts          # weather / calculator / 文件读写 / 目录列表工具
     search-tools.ts           # Tavily / Serper 搜索和网页抓取工具
+  session/
+    store.ts                  # 会话持久化：把 messages 追加写入 jsonl
+  context/
+    prompt-builder.ts         # Prompt Pipe：按模块组装 system prompt
+    prompts.ts                # coreRules / toolGuide / sessionContext 等 prompt 片段
+    compressor.ts             # 上下文压缩：microCompact + LLM summarize
+    compressor.test.ts        # 压缩单元测试
+    compressor.e2e.ts         # 真实模型压缩 E2E
   agent/
     loop.ts                   # Agent Loop 核心实现
     retry.ts                  # API 失败重试策略
@@ -308,6 +317,344 @@ this.exclusiveLock = true
 
 `while` 很重要，因为 `drainQueue()` 会一次唤醒所有等待者。被唤醒不等于已经拿到锁，只是获得了重新竞争锁的机会。
 
+## 第三章：Context Engineering
+
+Agent 能调用工具之后，下一个问题不是“怎么让它更聪明”，而是“怎么管理它看到的上下文”。
+
+模型每次请求真正能看到的东西只有两类：
+
+- `system`：告诉模型它是谁、有哪些规则、有哪些上下文约束
+- `messages`：用户、assistant、tool result 组成的对话历史
+
+Context Engineering 做的就是管理这两类输入。当前项目实现了三件事：
+
+- Session 持久化：把对话历史保存下来，下次可以继续
+- Prompt 组装：把 system prompt 拆成可组合的模块
+- Compression：历史太长时，把旧上下文压缩成摘要
+
+这三件事的目标不是“省 token”这么简单，而是让 Agent 在多轮任务里保持连续性：它要记得做过什么、读过哪些文件、工具返回过什么关键信息，同时又不能把所有原始日志无限塞进模型窗口。
+
+### 1. Session 持久化：让 Agent 记得上一轮发生了什么
+
+最朴素的 ChatBot 通常把 `messages` 放在内存里。进程一退出，历史就没了。Agent 不一样，它经常要跨多轮完成任务，所以需要把对话历史落盘。
+
+当前实现放在 [src/session/store.ts](src/session/store.ts)：
+
+```ts
+export class SessionStore {
+  append(message: ModelMessage) {
+    const entry: SessionEntry = {
+      message,
+      type: 'message',
+      timestamp: new Date().toISOString(),
+    }
+    appendFileSync(this.filePath, JSON.stringify(entry) + '\n', 'utf8')
+  }
+
+  load(): ModelMessage[] {
+    // 逐行读取 jsonl，再还原成 ModelMessage[]
+  }
+}
+```
+
+这里用的是 JSONL，而不是一个大的 JSON 数组：
+
+- 每次新增消息只需要追加一行，不需要重写整个文件
+- 进程中途退出时，已经写入的历史仍然保留
+- 后续想加 trace id、usage、工具耗时，也可以扩展每一行的结构
+
+入口 [src/index.ts](src/index.ts) 里根据 `--continue` 决定是否恢复历史：
+
+```ts
+const isContinue = process.argv.includes('--continue')
+const sessionId = 'default'
+const store = new SessionStore(sessionId)
+
+let messages: ModelMessage[] = []
+if (isContinue && store.exists()) {
+  messages = store.load()
+}
+```
+
+运行方式：
+
+```bash
+bun run continue
+```
+
+每轮用户对话结束后，只保存本轮新增消息：
+
+```ts
+const beforeCount = messages.length
+messages.push(userMessage)
+
+await agentLoop({ messages, ... })
+
+store.appendAll(messages.slice(beforeCount))
+```
+
+这里的 `beforeCount` 很关键。`agentLoop` 会把 assistant 回复、tool-call、tool-result 都追加进同一个 `messages` 数组。如果直接保存整个数组，每一轮都会重复写入旧历史。用 `slice(beforeCount)` 就只保存本轮新增的部分。
+
+### 2. Prompt 组装：不要把 system prompt 写成一整坨字符串
+
+随着 Agent 能力增加，system prompt 会越来越长：
+
+- 基础行为规则
+- 工具使用说明
+- MCP / deferred tools 提示
+- 当前 session 信息
+- 未来可能还有安全策略、项目约束、输出格式要求
+
+如果全部写在一个模板字符串里，很快会变得难维护。当前项目把 system prompt 拆成一组 pipe，核心在 [src/context/prompt-builder.ts](src/context/prompt-builder.ts)：
+
+```ts
+export type PipeFn = (ctx: PromptContext) => string | null
+
+export class PromptBuilder {
+  private pipes: Array<{ name: string; fn: PipeFn }> = []
+
+  pipe(name: string, fn: PipeFn) {
+    this.pipes.push({ name, fn })
+    return this
+  }
+
+  build(ctx: PromptContext) {
+    const sections: string[] = []
+
+    for (const { fn } of this.pipes) {
+      const result = fn(ctx)
+      if (result !== null) sections.push(result)
+    }
+
+    return sections.join('\n\n')
+  }
+}
+```
+
+一个 pipe 就是一个“可开关的 prompt 片段”。例如 [src/context/prompts.ts](src/context/prompts.ts) 里的 `toolGuide`：
+
+```ts
+export function toolGuide(): PipeFn {
+  return (ctx) => {
+    if (ctx.toolCount === 0) return null
+    return `你有 ${ctx.toolCount} 个工具可用。需要操作本地文件时使用内置工具，需要访问外部服务时使用 MCP 工具。`
+  }
+}
+```
+
+它的特点是：prompt 片段可以根据上下文决定是否出现。没有工具时，`toolGuide` 返回 `null`；有工具时才把说明放进 system prompt。
+
+入口处的组装方式是：
+
+```ts
+const builder = new PromptBuilder()
+  .pipe('coreRules', coreRules())
+  .pipe('toolGuide', toolGuide())
+  .pipe('deferredTools', deferredTools())
+  .pipe('sessionContext', sessionContext())
+
+const SYSTEM = builder.build(promptCtx)
+```
+
+这个结构比一个巨大字符串更适合教学和扩展：
+
+- 新增规则时，只新增一个 pipe
+- 临时关闭某段 prompt 时，只移除一行 `.pipe(...)`
+- 每段 prompt 都可以单独测试
+- `builder.debug(ctx)` 可以打印每段是否启用，以及生成了多少字符
+
+### 3. Compression：上下文不是越多越好
+
+Session 持久化解决的是“记住历史”，但它会带来新问题：历史会越来越长。
+
+如果把所有历史原样塞进模型，会有几个问题：
+
+- token 成本越来越高
+- 请求越来越慢
+- 工具结果日志会挤掉真正重要的信息
+- 模型可能被旧的、低价值细节干扰
+
+所以第三章引入两层压缩，代码在 [src/context/compressor.ts](src/context/compressor.ts)。
+
+第一层是 `microCompact`：不调用模型，只清理旧工具结果。
+
+```ts
+const KEEP_RECENT_TOOL_RESULTS = 3
+
+export function microCompact(messages: ModelMessage[]) {
+  // 找到所有 tool result
+  // 保留最近 3 个
+  // 更早的 read_file / bash / grep / glob 等结果替换为占位符
+}
+```
+
+为什么只清理旧工具结果？因为 tool result 往往最占上下文。例如 `read_file` 可能返回几千字符，`grep` 可能返回一大串匹配结果。旧工具结果的完整原文通常不需要一直保留，保留一句：
+
+```text
+[tool result cleared]
+```
+
+就足够告诉模型：这里曾经有过一个工具结果，但原文已经被清理。
+
+第二层是 `summarize`：调用模型，把较早的对话压缩成结构化摘要。
+
+```ts
+const KEEP_RECENT_MESSAGES = 6
+const CONTEXT_TOKEN_THRESHOLD = 300
+```
+
+当前策略是：
+
+1. token 估算没超过阈值，不压缩
+2. 消息数不超过最近窗口，不压缩
+3. 保留最近 6 条消息原文
+4. 把更早的消息整理成 `conversationText`
+5. 调用模型生成摘要
+6. 用一条新的 `user` 消息替换旧历史
+
+压缩后的消息形状大致是：
+
+```ts
+[
+  {
+    role: 'user',
+    content: `[以下是之前对话的压缩摘要]
+
+## 用户意图
+...
+
+## 已完成的操作
+...
+
+[摘要结束，以下是最近的对话]`,
+  },
+  ...recentMessages,
+]
+```
+
+这里刻意把摘要放成一条 `user` 消息，而不是放进 `system`。原因是：它描述的是“对话历史”，不是永久规则。`system` 更适合放稳定的行为约束；历史摘要应该跟着 `messages` 一起参与上下文管理。
+
+摘要 prompt 要求模型输出固定结构：
+
+```text
+## 用户意图
+## 已完成的操作
+## 关键发现
+## 当前状态
+## 需要保留的细节
+```
+
+这个结构的目的不是好看，而是降低信息丢失概率。普通自然语言摘要很容易写成“用户询问了项目情况”这种空话；结构化摘要会逼模型保留文件路径、变量名、版本号、错误信息这些后续任务真正需要的细节。
+
+### 压缩触发点
+
+当前有两个触发点。
+
+程序启动并恢复 session 后，会先压缩历史：
+
+```ts
+const beforeTokens = estimateTokens(messages)
+
+const mc = microCompact(messages)
+messages = mc.messages
+
+const compResult = await summarize(model, messages, summary)
+messages = compResult.messages
+summary = compResult.summary
+```
+
+每轮对话结束后，如果当前上下文超过 4000 token，也会再次压缩：
+
+```ts
+const currentTokens = estimateTokens(messages)
+if (currentTokens > 4000) {
+  const mc2 = microCompact(messages)
+  messages = mc2.messages
+
+  const summarizeResult = await summarize(model, messages, summary)
+  messages = summarizeResult.messages
+  summary = summarizeResult.summary
+}
+```
+
+注意这里的 `estimateTokens` 只是教学项目里的粗略估算：
+
+```ts
+return Math.ceil(chars / 4)
+```
+
+真实生产系统通常会使用模型对应 tokenizer，或者直接依赖 API 返回的 usage。
+
+### 用 E2E 看压缩效果
+
+压缩逻辑有单元测试，也有一个真实模型 E2E：
+
+```bash
+bun run test:e2e:compression
+```
+
+这个测试会注入一段假的历史消息，包括：
+
+- 列目录
+- 读取 `package.json`
+- 读取 `sample-data.txt`
+- 搜索 `src` 里的 export
+
+然后真实调用 DeepSeek 做摘要，并打印压缩前后的结果：
+
+```text
+[Compression E2E]
+before: 16 messages, ~416 tokens
+after microCompact: 16 messages, ~394 tokens, cleared 1 tool result(s)
+after summarize: 9 messages, ~430 tokens, compressed 8 message(s)
+
+[Summary]
+...
+
+[Compressed Messages]
+...
+```
+
+这个 E2E 的价值不是追求 token 数一定下降。因为摘要是自然语言，模型可能写得更详细，短 fixture 下 token 不一定变少。它真正验证的是：
+
+- 旧工具结果能被清理
+- 旧消息能被折叠成摘要
+- 最近几条消息仍保留原文
+- 摘要能保留 `package.json`、版本号、文件名等关键信息
+
+### 一个容易踩的坑：压缩输入必须包含正文
+
+`summarize` 的核心是把旧消息转成 `conversationText`。这里不能只写角色名：
+
+```text
+**user**
+
+**assistant**
+```
+
+这样模型根本不知道用户问了什么、工具返回了什么，自然不可能总结出有用信息。
+
+当前实现会提取字符串消息、text part 和 tool output：
+
+```ts
+const content =
+  typeof msg.content === 'string'
+    ? msg.content
+    : Array.isArray(msg.content)
+      ? msg.content
+          .map((p: any) => {
+            if (typeof p.text === 'string') return p.text
+            if (typeof p.output === 'string') return p.output
+            if (Object.prototype.hasOwnProperty.call(p, 'output'))
+              return JSON.stringify(p.output ?? '')
+            return ''
+          })
+          .join('')
+      : ''
+```
+
+这段看起来只是序列化细节，但它决定了 compression 有没有真实信息可压缩。Context Engineering 经常就是这种细节工程：不是多写几句 prompt，而是确保模型看到的是正确、完整、排序合理的上下文。
+
 ## 第一章：Agent Loop
 
 ## 为什么要把 response.messages 写回 messages
@@ -454,7 +801,7 @@ messages.push({
 bun test
 ```
 
-当前测试主要覆盖两块。
+当前测试主要覆盖三块。
 
 `loop-detection.test.ts`：
 
@@ -474,9 +821,25 @@ bun test
 - 预算内继续执行
 - 超预算后停止下一次模型调用
 
+`compressor.test.ts`：
+
+- `microCompact` 只清理较早的可清理工具结果
+- 最近 3 个工具结果保持原样
+- 低 token / 低消息量时不触发 summarize
+- summarize 会保留最近窗口，并把旧消息压缩成摘要消息
+- 模型摘要失败时回退到原始 messages
+- `estimateTokens` 覆盖字符串、text part 和 tool output
+
+真实模型压缩 E2E 需要单独运行：
+
+```bash
+bun run test:e2e:compression
+```
+
 ## 可以继续扩展的方向
 
 - 给工具执行增加超时控制
 - 把循环检测结果结构化返回给上层 UI
 - 增加更真实的工具，例如数据库查询、浏览器自动化、长期记忆
 - 用 trace id 记录每一轮 step、tool-call、tool-result 和 token usage
+- 把压缩摘要持久化到 session，避免每次启动都重新摘要同一段历史
