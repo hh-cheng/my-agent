@@ -13,7 +13,10 @@ const CLEARABLE_TOOLS = new Set([
 const KEEP_RECENT_TOOL_RESULTS = 3
 
 //* === 压缩工具结果，只保留最近 N 个工具结果，其他清理掉 ===
-export function microCompact(messages: ModelMessage[]) {
+export function microCompact(messages: ModelMessage[]): {
+  messages: ModelMessage[]
+  cleared: number
+} {
   // 找到所有 tool result 消息的位置
   const toolResultIndices: number[] = []
   for (let i = 0; i < messages.length; i++) {
@@ -27,7 +30,7 @@ export function microCompact(messages: ModelMessage[]) {
   )
 
   let cleared = 0
-  const result = messages.map((msg, idx) => {
+  const result = messages.map((msg, idx): ModelMessage => {
     if (!toClear.includes(idx)) return msg
     if (msg.role !== 'tool' || !Array.isArray(msg.content)) return msg
 
@@ -42,7 +45,7 @@ export function microCompact(messages: ModelMessage[]) {
         ...part,
         output: '[tool result cleared]',
       })),
-    }
+    } as ModelMessage
   })
 
   return { messages: result, cleared }
@@ -111,10 +114,15 @@ export async function summarize(
           ? msg.content
           : Array.isArray(msg.content)
             ? msg.content
-                .map((p: any) => p.text || JSON.stringify(p.output || ''))
+                .map((p: any) => {
+                  if (typeof p.text === 'string') return p.text
+                  if (typeof p.output === 'string') return p.output
+                  if ('output' in p) return JSON.stringify(p.output ?? '')
+                  return ''
+                })
                 .join('')
             : ''
-      return content ? `**${msg.role}**` : ''
+      return content ? `**${msg.role}**\n${content}` : ''
     })
     .filter(Boolean)
     .join('\n\n')

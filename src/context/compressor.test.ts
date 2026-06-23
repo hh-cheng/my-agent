@@ -125,8 +125,11 @@ describe('summarize', () => {
     expect(generateTextMock).toHaveBeenCalledTimes(1)
     expect(generateTextMock.mock.calls[0][0]).toMatchObject({
       model: { id: 'model' },
-      prompt: '**user**\n\n**assistant**',
     })
+    expect(generateTextMock.mock.calls[0][0].prompt).toContain('**user**\nu0 ')
+    expect(generateTextMock.mock.calls[0][0].prompt).toContain(
+      '**assistant**\na1 ',
+    )
     expect(result.summary).toBe('new compact summary')
     expect(result.compressedCount).toBe(2)
     expect(result.messages).toEqual([
@@ -160,8 +163,12 @@ describe('summarize', () => {
       'previous compact summary',
     )
 
-    expect(generateTextMock.mock.calls[0][0].prompt).toBe(
-      '## 已有摘要（上一次压缩的结果）\n\nprevious compact summary\n\n## 需要压缩的新对话\n\n**user**\n\n**assistant**',
+    expect(generateTextMock.mock.calls[0][0].prompt).toContain(
+      '## 已有摘要（上一次压缩的结果）\n\nprevious compact summary\n\n## 需要压缩的新对话',
+    )
+    expect(generateTextMock.mock.calls[0][0].prompt).toContain('**user**\nu0 ')
+    expect(generateTextMock.mock.calls[0][0].prompt).toContain(
+      '**assistant**\na1 ',
     )
     expect(result.summary).toBe('merged summary')
   })
