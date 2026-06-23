@@ -117,7 +117,8 @@ export async function summarize(
                 .map((p: any) => {
                   if (typeof p.text === 'string') return p.text
                   if (typeof p.output === 'string') return p.output
-                  if ('output' in p) return JSON.stringify(p.output ?? '')
+                  if (Object.prototype.hasOwnProperty.call(p, 'output'))
+                    return JSON.stringify(p.output ?? '')
                   return ''
                 })
                 .join('')
