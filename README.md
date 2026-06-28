@@ -13,7 +13,7 @@
 当前进度：
 
 - 第一章：Agent Loop 已完成
-- 第二章：Tool System 实现中
+- 第二章：Tool System 教学版已完成
 - 第三章：Context Engineering 教学版已完成
 
 ## 快速开始
@@ -131,7 +131,7 @@ while (step < MAX_STEPS) {
 
 ## 第二章：Tool System
 
-工具主要在 [src/tools/utility-tools.ts](src/tools/utility-tools.ts) 和 [src/tools/search-tools.ts](src/tools/search-tools.ts) 里定义。当前包括：
+工具主要在 [src/tools/utility-tools.ts](src/tools/utility-tools.ts) 和 [src/tools/search-tools.ts](src/tools/search-tools.ts) 里定义。作为教学版，当前已经覆盖工具系统需要讲清楚的核心能力：
 
 - `get_weather`：查询 mock 天气
 - `calculator`：计算数学表达式
@@ -1001,10 +1001,10 @@ bun test
 bun run test:e2e:compression
 ```
 
-## 可以继续扩展的方向
+## 后续实验方向
 
-- 给工具执行增加超时控制
+当前 Agent Loop、Tool System 和 Context Engineering 的教学版都已经完成。后续如果继续写，可以作为独立实验，而不是现有章节的必做功能：
+
 - 把循环检测结果结构化返回给上层 UI
-- 增加更真实的工具，例如数据库查询、浏览器自动化、长期记忆
 - 用 trace id 记录每一轮 step、tool-call、tool-result 和 token usage
 - 把压缩摘要持久化到 session，避免每次启动都重新摘要同一段历史
