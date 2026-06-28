@@ -1,6 +1,7 @@
 import { streamText, type LanguageModel, type ModelMessage } from 'ai'
 
 import type { ToolRegistry } from '@/tools/tool-registry'
+import { normalizeUsage, type UsageTracker } from '@/usage/tracker'
 import {
   errorLabel,
   infoLabel,
@@ -27,6 +28,8 @@ export type LoopParams = {
   messages: ModelMessage[]
   system: string
   budget: BudgetState
+  tracker?: UsageTracker
+  modelId?: string
 }
 
 export type AgentLoopParams = {
@@ -35,6 +38,8 @@ export type AgentLoopParams = {
   messages: ModelMessage[]
   system: string
   budget: BudgetState
+  tracker?: UsageTracker
+  modelId?: string
 }
 
 const MAX_STEPS = 15
@@ -42,7 +47,9 @@ const MAX_RETRIES = 3
 
 // 带循环检测的 Agent 主循环；调用方传入的 messages 会被原地追加。
 export async function agentLoop(params: AgentLoopParams) {
-  const { model, tools, messages, system, budget } = params
+  const { model, tools, messages, system, budget, tracker } = params
+  const modelId =
+    params.modelId ?? String((model as any).modelId ?? 'mock-model')
 
   let step = 0
   resetHistory()
@@ -143,6 +150,8 @@ export async function agentLoop(params: AgentLoopParams) {
     messages.push(...stepResponse.messages)
 
     //* Token 预算追踪
+    tracker?.record(modelId, normalizeUsage(stepUsage))
+
     const take = stepUsage.inputTokens ?? 0
     const out = stepUsage.outputTokens ?? 0
     budget.used += take + out

@@ -15,21 +15,27 @@ import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
 import { MCPClient } from './mcp/mcp-client'
+import { UsageTracker } from './usage/tracker'
 import { SessionStore } from './session/store'
 import { allTools } from './tools/utility-tools'
 import { createMockModel } from './mock/mock-model'
 import { ToolRegistry } from './tools/tool-registry'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
-import { debugLabel, logStyle, successLabel, warnLabel } from './logging'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
 import { applyDefense, estimateMessageTokens } from './context/defense'
 import { PromptBuilder, PromptContext } from './context/prompt-builder'
+import { debugLabel, logStyle, successLabel, warnLabel } from './logging'
 import {
+  renderUsageView,
+  renderContextView,
+  buildContextSnapshot,
+} from './context/view.js'
+import {
+  toolGuide,
   coreRules,
   deferredTools,
   sessionContext,
-  toolGuide,
 } from './context/prompts'
 
 const DEBUG = process.argv.includes('--debug')
@@ -45,6 +51,11 @@ const deepSeek = createDeepSeek({
 const model = process.env.DEEPSEEK_API_KEY
   ? deepSeek.chat('deepseek-v4-flash')
   : createMockModel()
+
+const modelId = String((model as any).modelId ?? 'mock-model')
+const modelName = process.env.DEEPSEEK_API_KEY
+  ? 'DeepSeek V4 Flash'
+  : 'Mock Model'
 
 // 工具注册：streamText 通过 tools 参数暴露给模型
 const toolRegistry = new ToolRegistry()
@@ -66,6 +77,39 @@ for (const tool of toolRegistry.getAll()) {
 
 // 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
 const budget: BudgetState = { used: 0, limit: 200_000 }
+
+function estimateToolDescriptionChars() {
+  return JSON.stringify(
+    toolRegistry.getActiveTools().map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    })),
+  ).length
+}
+
+function renderStatus(
+  messages: ModelMessage[],
+  tracker: UsageTracker,
+  system: string,
+) {
+  const messageTokens = estimateMessageTokens(messages)
+  const tools = toolRegistry.countTokenEstimate()
+  const totals = tracker.totals()
+  const pct = Math.round((budget.used / budget.limit) * 100)
+
+  return [
+    '',
+    logStyle.banner('Status'),
+    `消息数：${messages.length}`,
+    `消息 token 估算：~${messageTokens}`,
+    `System prompt：${system.length} chars`,
+    `工具：${toolRegistry.getActiveTools().length} active，deferred ~${tools.deferred} tokens，总计 ~${tools.total} tokens`,
+    `预算：${budget.used}/${budget.limit} tokens (${pct}%)`,
+    `Usage：${totals.steps} 步，$${totals.cost.toFixed(4)}，cache hit ${(totals.hitRate * 100).toFixed(1)}%`,
+    '',
+  ].join('\n')
+}
 
 function setTimestampMessages(
   messages: ModelMessage[],
@@ -160,6 +204,9 @@ async function connectMCP() {
 
 async function main() {
   await connectMCP()
+
+  //* === 用量追踪 ===
+  const tracker = new UsageTracker()
 
   //* === 工具统计 ===
   debugLog(
@@ -259,6 +306,34 @@ async function main() {
         return
       }
 
+      if (trimmed === '/context') {
+        const snapshot = buildContextSnapshot({
+          modelName,
+          modelId,
+          windowTokens: budget.limit,
+          systemPromptChars: SYSTEM.length,
+          toolDescriptionChars: estimateToolDescriptionChars(),
+          memoryChars: 0,
+          skillsChars: 0,
+          messages,
+        })
+        console.log(renderContextView(snapshot))
+        ask()
+        return
+      }
+
+      if (trimmed === '/usage') {
+        console.log(renderUsageView(tracker))
+        ask()
+        return
+      }
+
+      if (trimmed === '/status') {
+        console.log(renderStatus(messages, tracker, SYSTEM))
+        ask()
+        return
+      }
+
       const beforeCount = messages.length
       const userMessage = {
         role: 'user',
@@ -271,10 +346,12 @@ async function main() {
 
       await agentLoop({
         model,
-        tools: toolRegistry,
+        budget,
+        tracker,
+        modelId,
         messages,
         system: SYSTEM,
-        budget,
+        tools: toolRegistry,
       })
 
       setTimestampMessages(messages, timestamps, beforeCount)
@@ -287,9 +364,12 @@ async function main() {
   }
 
   console.log(
-    logStyle.banner('Super Agent v0.7 — Session + Prompt Pipe') +
+    logStyle.banner('Super Agent v0.10 — Cache & Cost') +
       logStyle.dim(' (type "exit" to quit)'),
   )
+  console.log('/context — 终端里看 context 占用矩阵（参考 Claude Code）')
+  console.log('/usage — 累计 token 用量、cache 命中率、节省金额')
+  console.log('/status — 当前消息数和 token 估算')
   console.log(
     logStyle.dim(
       '对话会自动保存。用 bun run continue 恢复上次对话；加 --debug 查看辅助信息。\n',
