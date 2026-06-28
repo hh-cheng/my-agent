@@ -1,3 +1,5 @@
+import { logStyle, successLabel } from '@/logging'
+
 export interface PromptContext {
   toolCount: number
   sessionId: string
@@ -29,12 +31,15 @@ export class PromptBuilder {
   }
 
   debug(ctx: PromptContext) {
-    console.log('\n=== Prompt Pipe Debug ===')
+    console.log(`\n${logStyle.banner('=== Prompt Pipe Debug ===')}`)
     for (const { name, fn } of this.pipes) {
       const result = fn(ctx)
-      const status = result !== null ? `[ON] ${result.length}` : '[OFF]'
-      console.log(`${name}: ${status}`)
+      const status =
+        result !== null
+          ? `${successLabel('ON')} ${result.length}`
+          : logStyle.muted('[OFF]')
+      console.log(`${logStyle.info(name)}: ${status}`)
     }
-    console.log('=== End of Debug ===\n')
+    console.log(`${logStyle.banner('=== End of Debug ===')}\n`)
   }
 }

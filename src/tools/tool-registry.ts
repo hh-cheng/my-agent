@@ -1,6 +1,7 @@
 import { jsonSchema, type streamText } from 'ai'
 
 import type { MCPClient } from '@/mcp/mcp-client'
+import { toolLabel } from '@/logging'
 
 export interface ToolDefinition {
   //* 给 LLM 看的元信息
@@ -111,10 +112,10 @@ export class ToolRegistry {
           // 在真正执行前先按 isConcurrentSafe 获取锁
           if (isConcurrentSafe) {
             await registry.acquireConcurrent()
-            console.log(`[并发] ${name} 获取共享锁`)
+            console.log(`${toolLabel('并发')} ${name} 获取共享锁`)
           } else {
             await registry.acquireExclusive()
-            console.log(`[独占] ${name} 获取独占锁`)
+            console.log(`${toolLabel('独占')} ${name} 获取独占锁`)
           }
 
           try {

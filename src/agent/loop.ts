@@ -1,6 +1,13 @@
 import { streamText, type LanguageModel, type ModelMessage } from 'ai'
 
 import type { ToolRegistry } from '@/tools/tool-registry'
+import {
+  errorLabel,
+  infoLabel,
+  logStyle,
+  toolLabel,
+  warnLabel,
+} from '@/logging'
 import { calculateDelay, isRetryable, sleep } from './retry'
 import {
   detect,
@@ -41,7 +48,7 @@ export async function agentLoop(params: AgentLoopParams) {
   resetHistory()
 
   while (step++ < MAX_STEPS) {
-    console.log(`\n--- Step ${step} ---`)
+    console.log(`\n${logStyle.banner(`--- Step ${step} ---`)}`)
 
     let fullText = ''
     let hasToolCall = false
@@ -59,7 +66,7 @@ export async function agentLoop(params: AgentLoopParams) {
           maxRetries: 0,
           tools: tools.toAISDKFormat(),
           onError: ({ error }) => {
-            console.error('[AI SDK stream error]', error)
+            console.error(errorLabel('AI SDK stream error'), error)
           },
         })
 
@@ -76,12 +83,12 @@ export async function agentLoop(params: AgentLoopParams) {
               hasToolCall = true
               lastToolCall = { name: part.toolName, input: part.input }
               console.log(
-                `[调用: ${part.toolName}(${JSON.stringify(part.input)})]`,
+                `${toolLabel('调用')} ${part.toolName}(${JSON.stringify(part.input)})`,
               )
 
               const detection = detect(part.toolName, part.input)
               if (detection.stuck) {
-                console.log(`  ${detection.message}`)
+                console.log(`  ${warnLabel('循环检测')} ${detection.message}`)
                 if (detection.level === 'critical') {
                   shouldBreak = true
                 } else {
@@ -102,7 +109,7 @@ export async function agentLoop(params: AgentLoopParams) {
                   : JSON.stringify(part.output, null, 2)
               const preview =
                 output.length > 120 ? output.slice(0, 120) + '...' : output
-              console.log(`[结果: ${part.toolName}] ${preview}`)
+              console.log(`${infoLabel(`结果:${part.toolName}`)} ${preview}`)
               if (lastToolCall) {
                 recordResult(lastToolCall.name, lastToolCall.input, part.output)
               }
@@ -118,7 +125,7 @@ export async function agentLoop(params: AgentLoopParams) {
         if (attempt >= MAX_RETRIES || !isRetryable(err)) throw err
         const delay = calculateDelay(attempt)
         console.log(
-          `\n[重试] 第${attempt}/${MAX_RETRIES}次失败，${delay}ms后重试...`,
+          `\n${warnLabel('重试')} 第${attempt}/${MAX_RETRIES}次失败，${delay}ms后重试...`,
         )
         await sleep(delay)
         fullText = ''
@@ -129,7 +136,7 @@ export async function agentLoop(params: AgentLoopParams) {
     }
 
     if (shouldBreak) {
-      console.log('\n[检测到循环调用， Agent 已停止]')
+      console.log(`\n${warnLabel('检测到循环调用')} Agent 已停止`)
       break
     }
 
@@ -141,10 +148,10 @@ export async function agentLoop(params: AgentLoopParams) {
     budget.used += take + out
     const percentage = Math.round((budget.used / budget.limit) * 100)
     console.log(
-      `\n\n[预算] ${budget.used}→${budget.limit} tokens，使用率 ${percentage}%`,
+      `\n\n${infoLabel('预算')} ${budget.used}→${budget.limit} tokens，使用率 ${percentage}%`,
     )
     if (budget.used > budget.limit) {
-      console.log('\n[预算超支，强制停止]')
+      console.log(`\n${warnLabel('预算超支')} 强制停止`)
       break
     }
 
@@ -154,10 +161,10 @@ export async function agentLoop(params: AgentLoopParams) {
       break
     }
 
-    console.log('\n→ 模型还在工作，继续下一步...')
+    console.log(`\n${logStyle.dim('→ 模型还在工作，继续下一步...')}`)
   }
 
   if (step >= MAX_STEPS) {
-    console.log('\n[达到最大步数限制，强制停止]')
+    console.log(`\n${warnLabel('达到最大步数限制')} 强制停止`)
   }
 }

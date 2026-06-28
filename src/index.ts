@@ -21,6 +21,7 @@ import { createMockModel } from './mock/mock-model'
 import { ToolRegistry } from './tools/tool-registry'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
+import { debugLabel, logStyle, successLabel, warnLabel } from './logging'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
 import { applyDefense, estimateMessageTokens } from './context/defense'
 import { PromptBuilder, PromptContext } from './context/prompt-builder'
@@ -51,7 +52,9 @@ toolRegistry.register(...allTools)
 toolRegistry.register(pickSearchTool(), webFetchTool)
 toolRegistry.register(createToolSearchTool(toolRegistry))
 
-debugLog(`已注册 ${toolRegistry.getAll().length} 个工具`)
+debugLog(
+  `${successLabel('工具')} 已注册 ${toolRegistry.getAll().length} 个工具`,
+)
 for (const tool of toolRegistry.getAll()) {
   const flags = [
     tool.isReadOnly ? '只读' : '可写',
@@ -104,13 +107,13 @@ function defendMessages(
 
   if (changed > 0) {
     debugLog(
-      `\n[防线:${label}] ~${before} → ~${defense.estimatedTokens} tokens`,
+      `\n${warnLabel(`防线:${label}`)} ~${before} → ~${defense.estimatedTokens} tokens`,
     )
     debugLog(
-      `  [Layer 2] 截断: ${defense.truncated}，预算清理: ${defense.compacted}`,
+      `  ${debugLabel('Layer 2')} 截断: ${defense.truncated}，预算清理: ${defense.compacted}`,
     )
     debugLog(
-      `  [Layer 3] 软修剪: ${defense.softPruned}，硬清除: ${defense.hardPruned}`,
+      `  ${debugLabel('Layer 3')} 软修剪: ${defense.softPruned}，硬清除: ${defense.hardPruned}`,
     )
   }
 
@@ -129,7 +132,7 @@ async function connectMCP() {
   }
 
   if (githubToken && canSpawn) {
-    debugLog('\n连接 GitHub MCP Server...')
+    debugLog(`\n${debugLabel('MCP')} 连接 GitHub MCP Server...`)
     try {
       const client = new MCPClient(
         'bunx',
@@ -137,15 +140,21 @@ async function connectMCP() {
         { GITHUB_PERSONAL_ACCESS_TOKEN: githubToken },
       )
       const tools = await toolRegistry.registerMCPServer('github', client)
-      debugLog(`已注册 ${tools.length} 个 GitHub MCP 工具`)
+      debugLog(
+        `${successLabel('MCP')} 已注册 ${tools.length} 个 GitHub MCP 工具`,
+      )
       return
     } catch (err) {
-      debugLog(`MCP 连接失败: ${err instanceof Error ? err.message : err}`)
+      debugLog(
+        `${warnLabel('MCP')} 连接失败: ${err instanceof Error ? err.message : err}`,
+      )
     }
   }
 
   if (!githubToken) {
-    debugLog('\n未配置 GITHUB_PERSONAL_ACCESS_TOKEN，跳过 GitHub MCP Server')
+    debugLog(
+      `\n${warnLabel('MCP')} 未配置 GITHUB_PERSONAL_ACCESS_TOKEN，跳过 GitHub MCP Server`,
+    )
   }
 }
 
@@ -153,7 +162,9 @@ async function main() {
   await connectMCP()
 
   //* === 工具统计 ===
-  debugLog(`\n已注册 ${toolRegistry.getAll().length} 个工具: `)
+  debugLog(
+    `\n${successLabel('工具')} 已注册 ${toolRegistry.getAll().length} 个工具: `,
+  )
   for (const tool of toolRegistry.getAll()) {
     const isMCP = tool.name.startsWith('mcp__')
     const flags = [
@@ -168,7 +179,7 @@ async function main() {
   const activeTools = toolRegistry.getActiveTools()
   const estimate = toolRegistry.countTokenEstimate()
 
-  debugLog('\n=== 工具统计 ===')
+  debugLog(`\n${logStyle.banner('=== 工具统计 ===')}`)
   debugLog(`全部工具：${allCount}个`)
   debugLog(`活跃工具：${activeTools.length}个`)
   debugLog(`延迟工具：${estimate.deferred}个`)
@@ -187,10 +198,10 @@ async function main() {
     messages = store.load()
     setTimestampMessages(messages, timestamps)
     debugLog(
-      `\n[Session] 恢复会话 "${sessionId}"，${messages.length} 条历史消息`,
+      `\n${debugLabel('Session')} 恢复会话 "${sessionId}"，${messages.length} 条历史消息`,
     )
   } else {
-    debugLog(`\n[Session] 新会话 "${sessionId}"`)
+    debugLog(`\n${debugLabel('Session')} 新会话 "${sessionId}"`)
   }
 
   defendMessages(messages, timestamps, 'session-start')
@@ -275,9 +286,14 @@ async function main() {
     })
   }
 
-  console.log('Super Agent v0.7 — Session + Prompt Pipe (type "exit" to quit)')
   console.log(
-    '对话会自动保存。用 bun run continue 恢复上次对话；加 --debug 查看辅助信息。\n',
+    logStyle.banner('Super Agent v0.7 — Session + Prompt Pipe') +
+      logStyle.dim(' (type "exit" to quit)'),
+  )
+  console.log(
+    logStyle.dim(
+      '对话会自动保存。用 bun run continue 恢复上次对话；加 --debug 查看辅助信息。\n',
+    ),
   )
   ask()
 }
