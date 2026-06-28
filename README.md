@@ -76,13 +76,16 @@ src/
     prompts.ts                # coreRules / toolGuide / sessionContext 等 prompt 片段
     compressor.ts             # 上下文压缩：microCompact + LLM summarize
     compressor.test.ts        # 压缩单元测试
-    compressor.e2e.ts         # 真实模型压缩 E2E
   agent/
     loop.ts                   # Agent Loop 核心实现
     retry.ts                  # API 失败重试策略
     loop-detection.ts         # 循环检测和熔断
     loop.test.ts              # Agent Loop 重试和预算测试
     loop-detection.test.ts    # 循环检测测试
+e2e/
+  compressor.e2e.ts           # 真实模型压缩 E2E
+  defense.e2e.ts              # Context defense E2E
+  agent-loop-defense.e2e.ts   # Agent Loop 防线 E2E
 ```
 
 ## 从 ChatBot 到 Agent

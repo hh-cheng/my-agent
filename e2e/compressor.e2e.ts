@@ -1,9 +1,9 @@
 import 'dotenv/config'
+import type { ModelMessage } from 'ai'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 import { describe, expect, test } from 'bun:test'
-import type { ModelMessage } from 'ai'
 
-import { estimateTokens, microCompact, summarize } from './compressor'
+import { estimateTokens, microCompact, summarize } from '@/context/compressor'
 
 function injectFakeHistory(messages: ModelMessage[]) {
   const fakeHistory = [

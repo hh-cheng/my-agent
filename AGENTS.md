@@ -157,4 +157,5 @@ If you run `bunx tsc --noEmit`, mention the known `src/mock/mock-index.ts` failu
 - Keep provider-specific usage normalization in `src/usage/tracker.ts`.
 - When adding tools, update `allTools` in `src/tools/utility-tools.ts` or the relevant registry path, and set concurrency metadata deliberately.
 - When changing prompt behavior, prefer a new or edited pipe in `src/context/prompts.ts` over embedding more text directly in `src/index.ts`.
+- Keep all E2E tests under `e2e/`; unit tests can stay next to source files.
 - When changing context pruning, add or update tests in `src/context/*test.ts` or `e2e/`.

@@ -8,8 +8,8 @@
     "dev": "bun src/index.ts",
     "continue": "bun src/index.ts --continue",
     "test": "bun test",
-    "test:e2e:compression": "bun test ./src/context/compressor.e2e.ts",
-    "test:e2e:defense": "bun test ./src/context/defense.e2e.ts",
+    "test:e2e:compression": "bun test ./e2e/compressor.e2e.ts",
+    "test:e2e:defense": "bun test ./e2e/defense.e2e.ts",
     "test:e2e:agent-loop-defense": "bun test ./e2e/agent-loop-defense.e2e.ts",
     "watch": "bun --watch src/index.ts"
   },

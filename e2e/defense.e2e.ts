@@ -1,7 +1,7 @@
-import { describe, expect, test } from 'bun:test'
 import type { ModelMessage } from 'ai'
+import { describe, expect, test } from 'bun:test'
 
-import { applyDefense, estimateMessageTokens } from './defense'
+import { applyDefense, estimateMessageTokens } from '@/context/defense'
 
 function toolMessage(
   toolCallId: string,
