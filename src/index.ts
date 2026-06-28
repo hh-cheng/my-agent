@@ -22,8 +22,8 @@ import { ToolRegistry } from './tools/tool-registry'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
+import { applyDefense, estimateMessageTokens } from './context/defense'
 import { PromptBuilder, PromptContext } from './context/prompt-builder'
-import { microCompact, summarize, estimateTokens } from './context/compressor'
 import {
   coreRules,
   deferredTools,
@@ -57,6 +57,59 @@ for (const tool of toolRegistry.getAll()) {
 
 // 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
 const budget: BudgetState = { used: 0, limit: 200_000 }
+
+function setTimestampMessages(
+  messages: ModelMessage[],
+  timestamps: Map<number, number>,
+  startIndex = 0,
+  timestamp = Date.now(),
+) {
+  for (let i = startIndex; i < messages.length; i++) {
+    if (!timestamps.has(i)) timestamps.set(i, timestamp)
+  }
+}
+
+function syncTimestamps(
+  messages: ModelMessage[],
+  timestamps: Map<number, number>,
+) {
+  for (const idx of timestamps.keys()) {
+    if (!messages[idx]) timestamps.delete(idx)
+  }
+}
+
+function defendMessages(
+  messages: ModelMessage[],
+  timestamps: Map<number, number>,
+  label: string,
+) {
+  syncTimestamps(messages, timestamps)
+
+  const before = estimateMessageTokens(messages)
+  const defense = applyDefense(messages, timestamps)
+  messages.splice(0, messages.length, ...defense.messages)
+  syncTimestamps(messages, timestamps)
+
+  const changed =
+    defense.truncated +
+    defense.compacted +
+    defense.softPruned +
+    defense.hardPruned
+
+  if (changed > 0) {
+    console.log(
+      `\n[防线:${label}] ~${before} → ~${defense.estimatedTokens} tokens`,
+    )
+    console.log(
+      `  [Layer 2] 截断: ${defense.truncated}，预算清理: ${defense.compacted}`,
+    )
+    console.log(
+      `  [Layer 3] 软修剪: ${defense.softPruned}，硬清除: ${defense.hardPruned}`,
+    )
+  }
+
+  return defense
+}
 
 async function connectMCP() {
   const githubToken = process.env.GITHUB_PERSONAL_ACCESS_TOKEN
@@ -118,13 +171,15 @@ async function main() {
   )
 
   //* === 消息历史 ===
-  const isContinue = process.argv.includes('--continue')
+  let messages: ModelMessage[] = []
+  const timestamps = new Map<number, number>()
   const sessionId = 'default'
   const store = new SessionStore(sessionId)
+  const isContinue = process.argv.includes('--continue')
 
-  let messages: ModelMessage[] = []
   if (isContinue && store.exists()) {
     messages = store.load()
+    setTimestampMessages(messages, timestamps)
     console.log(
       `\n[Session] 恢复会话 "${sessionId}"，${messages.length} 条历史消息`,
     )
@@ -132,39 +187,7 @@ async function main() {
     console.log(`\n[Session] 新会话 "${sessionId}"`)
   }
 
-  //* === 对话开始前压缩 ===
-  let summary = ''
-
-  const beforeTokens = estimateTokens(messages)
-  console.log(`\n[压缩前] ${messages.length} 条消息，~${beforeTokens} tokens`)
-
-  // 1. Layer 1: MicroCompact
-  const mc = microCompact(messages)
-  messages = mc.messages as ModelMessage[]
-  const afterMCTokens = estimateTokens(messages)
-  console.log(
-    `[Layer 1: MicroCompact] 清理了 ${mc.cleared} 个工具结果，~${afterMCTokens} tokens`,
-  )
-
-  // 2. Layer 2: Summarize
-  const compResult = await summarize(model, messages, summary)
-  messages = compResult.messages
-  summary = compResult.summary
-  const afterSummarizeTokens = estimateTokens(messages)
-  if (compResult.compressedCount > 0) {
-    console.log(
-      `[Layer 2: Summarization] 压缩了 ${compResult.compressedCount} 条消息, ~${afterSummarizeTokens} tokens`,
-    )
-    console.log(`[摘要预览] ${summary.slice(0, 150)}...`)
-  } else {
-    console.log(`[Layer 2: Summarization] 未触发（消息量不够）`)
-  }
-
-  console.log(
-    `[压缩后] ${messages.length} 条消息, ~${afterSummarizeTokens} tokens (节省 ${beforeTokens - afterSummarizeTokens} tokens)\n`,
-  )
-
-  messages = []
+  defendMessages(messages, timestamps, 'session-start')
 
   //* === 组装 system prompt ===
   const builder = new PromptBuilder()
@@ -226,6 +249,9 @@ async function main() {
         content: trimmed,
       } satisfies ModelMessage
       messages.push(userMessage)
+      timestamps.set(messages.length - 1, Date.now())
+
+      defendMessages(messages, timestamps, 'before-loop')
 
       await agentLoop({
         model,
@@ -235,28 +261,10 @@ async function main() {
         budget,
       })
 
+      setTimestampMessages(messages, timestamps, beforeCount)
+      defendMessages(messages, timestamps, 'after-loop')
+
       store.appendAll(messages.slice(beforeCount))
-
-      //* 每轮对话结束后按需压缩
-      const currentTokens = estimateTokens(messages)
-      if (currentTokens > 4000) {
-        console.log(`\n[压缩检查] ~${currentTokens} tokens，触发压缩...`)
-        const mc2 = microCompact(messages)
-        messages = mc2.messages as ModelMessage[]
-        if (mc2.cleared > 0)
-          console.log(
-            `[Layer 1: MicroCompact] 清理了 ${mc2.cleared} 个工具结果`,
-          )
-
-        const summarizeResult = await summarize(model, messages, summary)
-        if (summarizeResult.compressedCount > 0) {
-          messages = summarizeResult.messages
-          summary = summarizeResult.summary
-          console.log(
-            `[Layer 2: Summarization] 压缩了 ${summarizeResult.compressedCount} 条消息, ~${estimateTokens(messages)} tokens`,
-          )
-        }
-      }
 
       if (!rlClosed) ask()
     })
