@@ -31,6 +31,12 @@ import {
   toolGuide,
 } from './context/prompts'
 
+const DEBUG = process.argv.includes('--debug')
+
+function debugLog(...args: Parameters<typeof console.log>) {
+  if (DEBUG) console.log(...args)
+}
+
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
 })
@@ -45,14 +51,14 @@ toolRegistry.register(...allTools)
 toolRegistry.register(pickSearchTool(), webFetchTool)
 toolRegistry.register(createToolSearchTool(toolRegistry))
 
-console.log(`已注册 ${toolRegistry.getAll().length} 个工具`)
+debugLog(`已注册 ${toolRegistry.getAll().length} 个工具`)
 for (const tool of toolRegistry.getAll()) {
   const flags = [
     tool.isReadOnly ? '只读' : '可写',
     tool.isConcurrencySafe ? '可并发' : '串行',
   ].join(', ')
 
-  console.log(`  - ${tool.name} (${flags})`)
+  debugLog(`  - ${tool.name} (${flags})`)
 }
 
 // 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
@@ -97,13 +103,13 @@ function defendMessages(
     defense.hardPruned
 
   if (changed > 0) {
-    console.log(
+    debugLog(
       `\n[防线:${label}] ~${before} → ~${defense.estimatedTokens} tokens`,
     )
-    console.log(
+    debugLog(
       `  [Layer 2] 截断: ${defense.truncated}，预算清理: ${defense.compacted}`,
     )
-    console.log(
+    debugLog(
       `  [Layer 3] 软修剪: ${defense.softPruned}，硬清除: ${defense.hardPruned}`,
     )
   }
@@ -123,7 +129,7 @@ async function connectMCP() {
   }
 
   if (githubToken && canSpawn) {
-    console.log('\n连接 GitHub MCP Server...')
+    debugLog('\n连接 GitHub MCP Server...')
     try {
       const client = new MCPClient(
         'bunx',
@@ -131,15 +137,15 @@ async function connectMCP() {
         { GITHUB_PERSONAL_ACCESS_TOKEN: githubToken },
       )
       const tools = await toolRegistry.registerMCPServer('github', client)
-      console.log(`已注册 ${tools.length} 个 GitHub MCP 工具`)
+      debugLog(`已注册 ${tools.length} 个 GitHub MCP 工具`)
       return
     } catch (err) {
-      console.log(`MCP 连接失败: ${err instanceof Error ? err.message : err}`)
+      debugLog(`MCP 连接失败: ${err instanceof Error ? err.message : err}`)
     }
   }
 
   if (!githubToken) {
-    console.log('\n未配置 GITHUB_PERSONAL_ACCESS_TOKEN，跳过 GitHub MCP Server')
+    debugLog('\n未配置 GITHUB_PERSONAL_ACCESS_TOKEN，跳过 GitHub MCP Server')
   }
 }
 
@@ -147,7 +153,7 @@ async function main() {
   await connectMCP()
 
   //* === 工具统计 ===
-  console.log(`\n已注册 ${toolRegistry.getAll().length} 个工具: `)
+  debugLog(`\n已注册 ${toolRegistry.getAll().length} 个工具: `)
   for (const tool of toolRegistry.getAll()) {
     const isMCP = tool.name.startsWith('mcp__')
     const flags = [
@@ -155,18 +161,18 @@ async function main() {
       tool.isConcurrencySafe ? '可并发' : '串行',
     ].join(', ')
 
-    console.log(`  - ${tool.name} (${flags})`)
+    debugLog(`  - ${tool.name} (${flags})`)
   }
 
   const allCount = toolRegistry.getAll().length
   const activeTools = toolRegistry.getActiveTools()
   const estimate = toolRegistry.countTokenEstimate()
 
-  console.log('\n=== 工具统计 ===')
-  console.log(`全部工具：${allCount}个`)
-  console.log(`活跃工具：${activeTools.length}个`)
-  console.log(`延迟工具：${estimate.deferred}个`)
-  console.log(
+  debugLog('\n=== 工具统计 ===')
+  debugLog(`全部工具：${allCount}个`)
+  debugLog(`活跃工具：${activeTools.length}个`)
+  debugLog(`延迟工具：${estimate.deferred}个`)
+  debugLog(
     `Token 估算：~${estimate.active} (活跃) + ~${estimate.deferred} (延迟)`,
   )
 
@@ -180,11 +186,11 @@ async function main() {
   if (isContinue && store.exists()) {
     messages = store.load()
     setTimestampMessages(messages, timestamps)
-    console.log(
+    debugLog(
       `\n[Session] 恢复会话 "${sessionId}"，${messages.length} 条历史消息`,
     )
   } else {
-    console.log(`\n[Session] 新会话 "${sessionId}"`)
+    debugLog(`\n[Session] 新会话 "${sessionId}"`)
   }
 
   defendMessages(messages, timestamps, 'session-start')
@@ -205,8 +211,7 @@ async function main() {
 
   const SYSTEM = builder.build(promptCtx)
 
-  // Debug
-  builder.debug(promptCtx)
+  if (DEBUG) builder.debug(promptCtx)
 
   //* === 交互循环 ===
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -271,7 +276,9 @@ async function main() {
   }
 
   console.log('Super Agent v0.7 — Session + Prompt Pipe (type "exit" to quit)')
-  console.log('对话会自动保存。用 bun run continue 恢复上次对话。\n')
+  console.log(
+    '对话会自动保存。用 bun run continue 恢复上次对话；加 --debug 查看辅助信息。\n',
+  )
   ask()
 }
 
