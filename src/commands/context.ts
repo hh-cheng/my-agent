@@ -1,0 +1,47 @@
+import type { CommandHandler } from '.'
+import { logger } from '@/logging'
+import type { ToolRegistry } from '@/tools/tool-registry'
+import {
+  renderContextView,
+  buildContextSnapshot,
+  renderUsageView,
+} from '@/context/view'
+
+function estimateToolDescriptionChars(registry: ToolRegistry): number {
+  return JSON.stringify(
+    registry.getActiveTools().map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    })),
+  ).length
+}
+
+export const contextCommands: CommandHandler[] = [
+  (cmd, ctx) => {
+    if (cmd !== '/context' && cmd !== 'context') return false
+
+    const systemPrompt = ctx.builder.build(ctx.makePromptCtx())
+    // TODO 待 memory 补充完整实现
+    // const memoryChars = ctx.memoryStore?.buildPromptSection().length
+    const snapshot = buildContextSnapshot({
+      modelId: ctx.modelId,
+      modelName: ctx.modelName,
+      windowTokens: ctx.budget.limit,
+      systemPromptChars: systemPrompt.length,
+      toolDescriptionChars: estimateToolDescriptionChars(ctx.registry),
+      memoryChars: 0,
+      skillsChars: 0,
+      messages: ctx.messages,
+    })
+
+    logger.raw(renderContextView(snapshot))
+    return true
+  },
+
+  (cmd, ctx) => {
+    if (cmd !== '/usage' && cmd !== 'usage') return false
+    logger.raw(renderUsageView(ctx.tracker))
+    return true
+  },
+]

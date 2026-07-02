@@ -1,5 +1,7 @@
 import pc from 'picocolors'
 
+import { DEBUG } from '@/env'
+
 export const logStyle = {
   banner: pc.bold,
   dim: pc.dim,
@@ -37,4 +39,34 @@ export function warnLabel(text: string) {
 
 export function errorLabel(text: string) {
   return label(text, logStyle.error)
+}
+
+export function debugLog(...args: Parameters<typeof console.log>) {
+  if (DEBUG) console.log(...args)
+}
+
+export const logger = {
+  raw(message = '') {
+    console.log(message)
+  },
+
+  debug(message: string) {
+    console.log(logStyle.muted(message))
+  },
+
+  info(message: string) {
+    console.log(logStyle.info(message))
+  },
+
+  success(message: string) {
+    console.log(logStyle.success(message))
+  },
+
+  warn(message: string) {
+    console.log(logStyle.warn(message))
+  },
+
+  error(message: string) {
+    console.error(logStyle.error(message))
+  },
 }

@@ -14,6 +14,10 @@ import { type ModelMessage } from 'ai'
 import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
+import { DEBUG } from './env'
+import { createDispatcher, type CommandContext } from './commands'
+import { debugCommands } from './commands/debug'
+import { contextCommands } from './commands/context'
 import { MCPClient } from './mcp/mcp-client'
 import { UsageTracker } from './usage/tracker'
 import { SessionStore } from './session/store'
@@ -24,25 +28,20 @@ import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
 import { applyDefense, estimateMessageTokens } from './context/defense'
-import { PromptBuilder, PromptContext } from './context/prompt-builder'
-import { debugLabel, logStyle, successLabel, warnLabel } from './logging'
+import { PromptBuilder, type PromptContext } from './context/prompt-builder'
 import {
-  renderUsageView,
-  renderContextView,
-  buildContextSnapshot,
-} from './context/view.js'
+  debugLabel,
+  debugLog,
+  logStyle,
+  successLabel,
+  warnLabel,
+} from './logging'
 import {
   toolGuide,
   coreRules,
   deferredTools,
   sessionContext,
 } from './context/prompts'
-
-const DEBUG = process.argv.includes('--debug')
-
-function debugLog(...args: Parameters<typeof console.log>) {
-  if (DEBUG) console.log(...args)
-}
 
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -78,38 +77,7 @@ for (const tool of toolRegistry.getAll()) {
 // 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
 const budget: BudgetState = { used: 0, limit: 200_000 }
 
-function estimateToolDescriptionChars() {
-  return JSON.stringify(
-    toolRegistry.getActiveTools().map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    })),
-  ).length
-}
-
-function renderStatus(
-  messages: ModelMessage[],
-  tracker: UsageTracker,
-  system: string,
-) {
-  const messageTokens = estimateMessageTokens(messages)
-  const tools = toolRegistry.countTokenEstimate()
-  const totals = tracker.totals()
-  const pct = Math.round((budget.used / budget.limit) * 100)
-
-  return [
-    '',
-    logStyle.banner('Status'),
-    `消息数：${messages.length}`,
-    `消息 token 估算：~${messageTokens}`,
-    `System prompt：${system.length} chars`,
-    `工具：${toolRegistry.getActiveTools().length} active，deferred ~${tools.deferred} tokens，总计 ~${tools.total} tokens`,
-    `预算：${budget.used}/${budget.limit} tokens (${pct}%)`,
-    `Usage：${totals.steps} 步，$${totals.cost.toFixed(4)}，cache hit ${(totals.hitRate * 100).toFixed(1)}%`,
-    '',
-  ].join('\n')
-}
+const dispatch = createDispatcher([...debugCommands, ...contextCommands])
 
 function setTimestampMessages(
   messages: ModelMessage[],
@@ -260,16 +228,16 @@ async function main() {
     .pipe('deferredTools', deferredTools())
     .pipe('sessionContext', sessionContext())
 
-  const promptCtx: PromptContext = {
-    sessionId,
-    sessionMessageCount: messages.length,
-    toolCount: toolRegistry.getActiveTools().length,
-    deferredToolSummary: toolRegistry.getDeferredToolSummary(),
+  const makePromptCtx = (): PromptContext => {
+    return {
+      sessionId,
+      sessionMessageCount: messages.length,
+      toolCount: toolRegistry.getActiveTools().length,
+      deferredToolSummary: toolRegistry.getDeferredToolSummary(),
+    }
   }
 
-  const SYSTEM = builder.build(promptCtx)
-
-  if (DEBUG) builder.debug(promptCtx)
+  if (DEBUG) builder.debug(makePromptCtx())
 
   //* === 交互循环 ===
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -306,30 +274,23 @@ async function main() {
         return
       }
 
-      if (trimmed === '/context') {
-        const snapshot = buildContextSnapshot({
-          modelName,
-          modelId,
-          windowTokens: budget.limit,
-          systemPromptChars: SYSTEM.length,
-          toolDescriptionChars: estimateToolDescriptionChars(),
-          memoryChars: 0,
-          skillsChars: 0,
-          messages,
-        })
-        console.log(renderContextView(snapshot))
-        ask()
-        return
+      const commandCtx: CommandContext = {
+        model,
+        modelName,
+        modelId,
+        budget,
+        tracker,
+        registry: toolRegistry,
+        builder,
+        messages,
+        sessionStore: store,
+        timestamps,
+        ask,
+        makePromptCtx,
       }
-
-      if (trimmed === '/usage') {
-        console.log(renderUsageView(tracker))
-        ask()
-        return
-      }
-
-      if (trimmed === '/status') {
-        console.log(renderStatus(messages, tracker, SYSTEM))
+      const handled = dispatch(trimmed, commandCtx)
+      if (handled === 'async') return
+      if (handled) {
         ask()
         return
       }
@@ -344,13 +305,14 @@ async function main() {
 
       defendMessages(messages, timestamps, 'before-loop')
 
+      const currentSystem = builder.build(makePromptCtx())
       await agentLoop({
         model,
         budget,
         tracker,
         modelId,
         messages,
-        system: SYSTEM,
+        system: currentSystem,
         tools: toolRegistry,
       })
 
