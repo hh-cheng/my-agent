@@ -67,7 +67,6 @@ toolRegistry.register(createToolSearchTool(toolRegistry))
 
 //* Memory
 const memoryStore = new MemoryStore('.')
-memoryStore.init()
 toolRegistry.register(createMemoryTool(memoryStore))
 
 debugLog(
@@ -187,6 +186,7 @@ async function connectMCP() {
 }
 
 async function main() {
+  await memoryStore.init()
   await connectMCP()
 
   //* === 用量追踪 ===
@@ -254,7 +254,7 @@ async function main() {
     }
   }
 
-  if (DEBUG) builder.debug(makePromptCtx())
+  if (DEBUG) await builder.debug(makePromptCtx())
 
   //* === 交互循环 ===
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -306,7 +306,7 @@ async function main() {
         ask,
         makePromptCtx,
       }
-      const handled = dispatch(trimmed, commandCtx)
+      const handled = await dispatch(trimmed, commandCtx)
       if (handled === 'async') return
       if (handled) {
         ask()
@@ -324,7 +324,7 @@ async function main() {
       defendMessages(messages, timestamps, 'before-loop')
 
       // 记忆变化时，下一轮对话的 system prompt 就包含最新的记忆内容
-      const currentSystem = builder.build(makePromptCtx())
+      const currentSystem = await builder.build(makePromptCtx())
       await agentLoop({
         model,
         budget,

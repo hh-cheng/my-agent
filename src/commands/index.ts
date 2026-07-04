@@ -28,12 +28,12 @@ export interface CommandContext {
 export type CommandHandler = (
   cmd: string,
   ctx: CommandContext,
-) => boolean | 'async'
+) => boolean | 'async' | Promise<boolean | 'async'>
 
 export function createDispatcher(handlers: CommandHandler[]): CommandHandler {
-  return (cmd, ctx) => {
+  return async (cmd, ctx) => {
     for (const h of handlers) {
-      const result = h(cmd, ctx)
+      const result = await h(cmd, ctx)
       if (result) return result
     }
     return false

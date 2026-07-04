@@ -40,7 +40,7 @@ export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
           if (!name || !type || !content) {
             return '保存失败: 需要 name, type, content 参数'
           }
-          const filename = memoryStore.save({
+          const filename = await memoryStore.save({
             name,
             type,
             content,
@@ -49,7 +49,7 @@ export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
           return `已保存到记忆: ${filename}`
         }
         case 'list': {
-          const entries = memoryStore.list()
+          const entries = await memoryStore.list()
           if (entries.length === 0) return '当前没有存储任何记忆。'
           return (
             `记忆列表 (共 ${entries.length} 条记忆):\n` +
@@ -59,7 +59,7 @@ export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
           )
         }
         case 'search': {
-          const results = memoryStore.search(args.query || '')
+          const results = await memoryStore.search(args.query || '')
           if (results.length === 0) {
             return `没有找到与 "${args.query}" 相关的记忆。`
           }
@@ -73,11 +73,13 @@ export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
         }
         case 'read': {
           if (!args.filename) return '读取失败: 需要 filename 参数'
-          return memoryStore.loadFile(filename) ?? `文件不存在: ${filename}`
+          return (
+            (await memoryStore.loadFile(filename)) ?? `文件不存在: ${filename}`
+          )
         }
         case 'delete': {
           if (!filename) return '删除失败: 需要 filename 参数'
-          return memoryStore.delete(args.filename)
+          return (await memoryStore.delete(args.filename))
             ? `已删除: ${filename}`
             : `文件不存在: ${filename}`
         }

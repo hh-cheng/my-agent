@@ -25,12 +25,12 @@ export const debugCommands: CommandHandler[] = [
     return true
   },
 
-  (cmd, ctx) => {
+  async (cmd, ctx) => {
     if (cmd !== '/status' && cmd !== 'status' && cmd !== '查看状态')
       return false
 
     const tokens = estimateMessageTokens(ctx.messages)
-    const system = ctx.builder.build(ctx.makePromptCtx())
+    const system = await ctx.builder.build(ctx.makePromptCtx())
     const tools = ctx.registry.countTokenEstimate()
     const totals = ctx.tracker.totals()
     const pct = Math.round((ctx.budget.used / ctx.budget.limit) * 100)

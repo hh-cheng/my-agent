@@ -7,7 +7,9 @@ export interface PromptContext {
   sessionMessageCount: number
 }
 
-export type PipeFn = (ctx: PromptContext) => string | null
+export type PipeFn = (
+  ctx: PromptContext,
+) => string | null | Promise<string | null>
 
 export class PromptBuilder {
   private pipes: Array<{ name: string; fn: PipeFn }> = []
@@ -17,11 +19,11 @@ export class PromptBuilder {
     return this
   }
 
-  build(ctx: PromptContext) {
+  async build(ctx: PromptContext) {
     const sections: string[] = []
 
     for (const { fn } of this.pipes) {
-      const result = fn(ctx)
+      const result = await fn(ctx)
       if (result !== null) {
         sections.push(result)
       }
@@ -30,10 +32,10 @@ export class PromptBuilder {
     return sections.join('\n\n')
   }
 
-  debug(ctx: PromptContext) {
+  async debug(ctx: PromptContext) {
     console.log(`\n${logStyle.banner('=== Prompt Pipe Debug ===')}`)
     for (const { name, fn } of this.pipes) {
-      const result = fn(ctx)
+      const result = await fn(ctx)
       const status =
         result !== null
           ? `${successLabel('ON')} ${result.length}`

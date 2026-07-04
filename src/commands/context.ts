@@ -18,11 +18,12 @@ function estimateToolDescriptionChars(registry: ToolRegistry): number {
 }
 
 export const contextCommands: CommandHandler[] = [
-  (cmd, ctx) => {
+  async (cmd, ctx) => {
     if (cmd !== '/context' && cmd !== 'context') return false
 
-    const systemPrompt = ctx.builder.build(ctx.makePromptCtx())
-    const memoryChars = ctx.memoryStore?.buildPromptSection().length ?? 0
+    const systemPrompt = await ctx.builder.build(ctx.makePromptCtx())
+    const memorySection = await ctx.memoryStore?.buildPromptSection()
+    const memoryChars = memorySection?.length ?? 0
     const snapshot = buildContextSnapshot({
       modelId: ctx.modelId,
       modelName: ctx.modelName,

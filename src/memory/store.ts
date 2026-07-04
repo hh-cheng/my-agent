@@ -1,5 +1,5 @@
-import fs from 'node:fs'
 import path from 'node:path'
+import { mkdir, readdir } from 'node:fs/promises'
 
 export interface MemoryEntry {
   name: string
@@ -34,17 +34,15 @@ export class MemoryStore {
     return path.join(this.memoryDir, INDEX_FILE)
   }
 
-  init() {
-    if (!fs.existsSync(this.memoryDir)) {
-      fs.mkdirSync(this.memoryDir, { recursive: true })
-    }
-    if (!fs.existsSync(this.indexPath)) {
-      fs.writeFileSync(this.indexPath, '# Memory Index\n', 'utf8')
+  async init() {
+    await mkdir(this.memoryDir, { recursive: true })
+    if (!(await Bun.file(this.indexPath).exists())) {
+      await Bun.write(this.indexPath, '# Memory Index\n')
     }
   }
 
-  save(entry: Omit<MemoryEntry, 'filePath'>) {
-    this.init()
+  async save(entry: Omit<MemoryEntry, 'filePath'>) {
+    await this.init()
     const slug = entry.name
       .toLowerCase()
       .replace(/[^a-z0-9一-]+/g, '-')
@@ -62,13 +60,13 @@ export class MemoryStore {
       entry.content,
     ].join('\n')
 
-    fs.writeFileSync(filePath, fileContent, 'utf8')
-    this.updateIndex(entry.name, filename, entry.description)
+    await Bun.write(filePath, fileContent)
+    await this.updateIndex(entry.name, filename, entry.description)
     return filename
   }
 
-  search(query: string): MemoryEntry[] {
-    const all = this.list()
+  async search(query: string): Promise<MemoryEntry[]> {
+    const all = await this.list()
     const keywords = query.toLowerCase().split(/\s+/)
     return all.filter((entry) => {
       const text =
@@ -77,16 +75,16 @@ export class MemoryStore {
     })
   }
 
-  list() {
-    this.init()
+  async list() {
+    await this.init()
     const entries: MemoryEntry[] = []
-    const files = fs
-      .readdirSync(this.memoryDir)
-      .filter((f) => f.endsWith('.md') && f !== INDEX_FILE)
+    const files = (await readdir(this.memoryDir)).filter(
+      (f) => f.endsWith('.md') && f !== INDEX_FILE,
+    )
 
     for (const file of files) {
       const filePath = path.join(this.memoryDir, file)
-      const raw = fs.readFileSync(filePath, 'utf8')
+      const raw = await Bun.file(filePath).text()
       const parsed = this.parseFrontmatter(raw)
       if (parsed) entries.push({ ...parsed, filePath })
     }
@@ -94,40 +92,42 @@ export class MemoryStore {
     return entries
   }
 
-  loadIndex() {
-    this.init()
-    const raw = fs.readFileSync(this.indexPath, 'utf8')
+  async loadIndex() {
+    await this.init()
+    const raw = await Bun.file(this.indexPath).text()
     return raw.length > MAX_FILE_CHARS
       ? raw.slice(0, MAX_FILE_CHARS) + '\n...(已截断)'
       : raw
   }
 
-  loadFile(filename: string) {
+  async loadFile(filename: string) {
     const filePath = path.join(this.memoryDir, filename)
-    if (!fs.existsSync(filePath)) return null
-    const raw = fs.readFileSync(filePath, 'utf8')
+    const file = Bun.file(filePath)
+    if (!(await file.exists())) return null
+    const raw = await file.text()
     return raw.length > MAX_FILE_CHARS
       ? raw.slice(0, MAX_FILE_CHARS) + '\n...(已截断)'
       : raw
   }
 
-  delete(filename: string) {
+  async delete(filename: string) {
     const filePath = path.join(this.memoryDir, filename)
-    if (!fs.existsSync(filePath)) return false
-    fs.unlinkSync(filePath)
+    const file = Bun.file(filePath)
+    if (!(await file.exists())) return false
+    await file.delete()
 
-    const indexContent = fs.readFileSync(this.indexPath, 'utf8')
+    const indexContent = await Bun.file(this.indexPath).text()
     const lines = indexContent
       .split('\n')
       .filter((l) => !l.includes(`(${filename})`))
-    fs.writeFileSync(this.indexPath, lines.join('\n'), 'utf8')
+    await Bun.write(this.indexPath, lines.join('\n'))
     return true
   }
 
-  buildPromptSection() {
-    this.init()
-    const index = this.loadIndex()
-    const entries = this.list()
+  async buildPromptSection() {
+    await this.init()
+    const index = await this.loadIndex()
+    const entries = await this.list()
 
     if (entries.length === 0) {
       return '[记忆系统] 当前没有存储任何记忆。你可以使用 memory 工具来保存重要信息。'
@@ -146,8 +146,12 @@ export class MemoryStore {
     return lines.join('\n')
   }
 
-  private updateIndex(name: string, filename: string, description: string) {
-    const indexContent = fs.readFileSync(this.indexPath, 'utf8')
+  private async updateIndex(
+    name: string,
+    filename: string,
+    description: string,
+  ) {
+    const indexContent = await Bun.file(this.indexPath).text()
     const lines = indexContent.split('\n')
 
     const existingIdx = lines.findIndex((l) => l.includes(`(${filename})`))
@@ -166,7 +170,7 @@ export class MemoryStore {
       lines.push(newLine)
     }
 
-    fs.writeFileSync(this.indexPath, lines.join('\n'), 'utf8')
+    await Bun.write(this.indexPath, lines.join('\n'))
   }
 
   private parseFrontmatter(raw: string): Omit<MemoryEntry, 'filePath'> | null {

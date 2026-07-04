@@ -4,7 +4,6 @@ import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
 import { createMockModel } from '@/mock/mock-model'
-import { weatherTool, calculatorTool } from '@/tools/utility-tools'
 
 type ModelMessage = NonNullable<
   Parameters<typeof streamText>[0]['messages']
@@ -91,9 +90,8 @@ async function main() {
     }
 
     messages.push({ role: 'user', content: trimmed })
-    const tools = { get_weather: weatherTool, calculator: calculatorTool }
 
-    const result = streamText({ model, messages, system: systemPrompt, tools })
+    const result = streamText({ model, messages, system: systemPrompt })
 
     process.stdout.write('Assistant: ')
     let fullResponse = ''
