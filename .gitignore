@@ -50,3 +50,5 @@ playwright-report
 .cache
 tmp
 temp
+
+.memory

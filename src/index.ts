@@ -15,17 +15,20 @@ import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
 import { DEBUG } from './env'
-import { createDispatcher, type CommandContext } from './commands'
-import { debugCommands } from './commands/debug'
-import { contextCommands } from './commands/context'
+import { MemoryStore } from './memory/store'
 import { MCPClient } from './mcp/mcp-client'
 import { UsageTracker } from './usage/tracker'
 import { SessionStore } from './session/store'
+import { debugCommands } from './commands/debug'
 import { allTools } from './tools/utility-tools'
+import { memoryCommands } from './commands/memory'
 import { createMockModel } from './mock/mock-model'
+import { contextCommands } from './commands/context'
 import { ToolRegistry } from './tools/tool-registry'
+import { createMemoryTool } from './tools/memory-tools'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
+import { createDispatcher, type CommandContext } from './commands'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
 import { applyDefense, estimateMessageTokens } from './context/defense'
 import { PromptBuilder, type PromptContext } from './context/prompt-builder'
@@ -56,11 +59,16 @@ const modelName = process.env.DEEPSEEK_API_KEY
   ? 'DeepSeek V4 Flash'
   : 'Mock Model'
 
-// 工具注册：streamText 通过 tools 参数暴露给模型
+//* 工具注册：streamText 通过 tools 参数暴露给模型
 const toolRegistry = new ToolRegistry()
 toolRegistry.register(...allTools)
 toolRegistry.register(pickSearchTool(), webFetchTool)
 toolRegistry.register(createToolSearchTool(toolRegistry))
+
+//* Memory
+const memoryStore = new MemoryStore('.')
+memoryStore.init()
+toolRegistry.register(createMemoryTool(memoryStore))
 
 debugLog(
   `${successLabel('工具')} 已注册 ${toolRegistry.getAll().length} 个工具`,
@@ -74,11 +82,17 @@ for (const tool of toolRegistry.getAll()) {
   debugLog(`  - ${tool.name} (${flags})`)
 }
 
-// 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
+//* 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
 const budget: BudgetState = { used: 0, limit: 200_000 }
 
-const dispatch = createDispatcher([...debugCommands, ...contextCommands])
+//* 命令
+const dispatch = createDispatcher([
+  ...debugCommands,
+  ...contextCommands,
+  ...memoryCommands,
+])
 
+//* timestamps 记录每条消息进入上下文的时间，用于 context defense 的 TTL 修剪
 function setTimestampMessages(
   messages: ModelMessage[],
   timestamps: Map<number, number>,
@@ -99,6 +113,7 @@ function syncTimestamps(
   }
 }
 
+//* 统一执行上下文防线：同步 timestamps、应用裁剪/压缩策略，并回写 messages
 function defendMessages(
   messages: ModelMessage[],
   timestamps: Map<number, number>,
@@ -132,6 +147,7 @@ function defendMessages(
   return defense
 }
 
+//* MCP
 async function connectMCP() {
   const githubToken = process.env.GITHUB_PERSONAL_ACCESS_TOKEN
 
@@ -226,6 +242,7 @@ async function main() {
     .pipe('coreRules', coreRules())
     .pipe('toolGuide', toolGuide())
     .pipe('deferredTools', deferredTools())
+    .pipe('memoryContext', () => memoryStore.buildPromptSection())
     .pipe('sessionContext', sessionContext())
 
   const makePromptCtx = (): PromptContext => {
@@ -283,6 +300,7 @@ async function main() {
         registry: toolRegistry,
         builder,
         messages,
+        memoryStore,
         sessionStore: store,
         timestamps,
         ask,
@@ -305,6 +323,7 @@ async function main() {
 
       defendMessages(messages, timestamps, 'before-loop')
 
+      // 记忆变化时，下一轮对话的 system prompt 就包含最新的记忆内容
       const currentSystem = builder.build(makePromptCtx())
       await agentLoop({
         model,
@@ -332,6 +351,7 @@ async function main() {
   console.log('/context — 终端里看 context 占用矩阵（参考 Claude Code）')
   console.log('/usage — 累计 token 用量、cache 命中率、节省金额')
   console.log('/status — 当前消息数和 token 估算')
+  console.log('/memory — 查看记忆')
   console.log(
     logStyle.dim(
       '对话会自动保存。用 bun run continue 恢复上次对话；加 --debug 查看辅助信息。\n',

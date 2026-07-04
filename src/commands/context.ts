@@ -22,15 +22,14 @@ export const contextCommands: CommandHandler[] = [
     if (cmd !== '/context' && cmd !== 'context') return false
 
     const systemPrompt = ctx.builder.build(ctx.makePromptCtx())
-    // TODO 待 memory 补充完整实现
-    // const memoryChars = ctx.memoryStore?.buildPromptSection().length
+    const memoryChars = ctx.memoryStore?.buildPromptSection().length ?? 0
     const snapshot = buildContextSnapshot({
       modelId: ctx.modelId,
       modelName: ctx.modelName,
       windowTokens: ctx.budget.limit,
       systemPromptChars: systemPrompt.length,
       toolDescriptionChars: estimateToolDescriptionChars(ctx.registry),
-      memoryChars: 0,
+      memoryChars,
       skillsChars: 0,
       messages: ctx.messages,
     })
