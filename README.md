@@ -15,6 +15,8 @@
 - 第一章：Agent Loop 已完成
 - 第二章：Tool System 教学版已完成
 - 第三章：Context Engineering 教学版已完成
+- 第四章：Memory 跨会话记忆已完成
+- 第五章：RAG 本地知识库已完成
 
 ## 快速开始
 
@@ -45,6 +47,21 @@ cp .env.example .env
 
 联网搜索工具是可选能力。配置 `TAVILY_API_KEY` 后会优先使用 Tavily；如果没有 Tavily 但配置了 `SERPER_API_KEY`，会回退到 Serper。详细说明见 [docs/search-tools.md](docs/search-tools.md)。
 
+RAG 也是可选能力。配置 `EMBED_API_KEY` 后，入口会注册 `rag_ingest`
+和 `rag_search`，并把文档片段持久化到本地 `knowledge.db`：
+
+```bash
+EMBED_API_KEY=你的_key bun run dev
+```
+
+Memory 不需要额外配置。启动后可以让 Agent 用 `memory` 工具保存跨会话记忆，也可以在终端里输入：
+
+```text
+/memory
+/memory search 偏好
+/dream
+```
+
 退出：
 
 ```text
@@ -69,6 +86,16 @@ src/
     tool-registry.ts          # 工具注册、结果截断、并发控制
     utility-tools.ts          # weather / calculator / 文件读写 / 目录列表工具
     search-tools.ts           # Tavily / Serper 搜索和网页抓取工具
+    memory-tools.ts           # 跨会话记忆工具
+    rag-tools.ts              # RAG 导入和搜索工具
+  memory/
+    store.ts                  # .memory/ 持久化、索引、搜索、lint
+    validator.ts              # 记忆健康检查
+  rag/
+    chunker.ts                # 文档分块
+    embedder.ts               # SiliconFlow embedding 包装和内存缓存
+    sqlite-store.ts           # SQLite + FTS5 混合检索存储
+    search.ts                 # 向量/关键词打分和 MMR
   session/
     store.ts                  # 会话持久化：把 messages 追加写入 jsonl
   context/
@@ -90,6 +117,8 @@ e2e/
   compressor.e2e.ts           # 真实模型压缩 E2E
   defense.e2e.ts              # Context defense E2E
   agent-loop-defense.e2e.ts   # Agent Loop 防线 E2E
+  dream.e2e.ts                # Memory dream 整理 E2E
+  rag.e2e.ts                  # RAG 导入和搜索 E2E
 ```
 
 ## 从 ChatBot 到 Agent
@@ -146,8 +175,13 @@ while (step < MAX_STEPS) {
 - `start_preview`：启动 `app/` 目录的本地预览服务器
 - `web_search`：联网搜索，自动在 Tavily / Serper 间选择
 - `web_fetch`：抓取指定网页并转换为 Markdown
+- `memory`：保存、搜索、读取、删除和 lint 跨会话记忆
+- `rag_ingest`：把本地文档分块、向量化并写入知识库
+- `rag_search`：从知识库里做混合检索
 
 联网搜索工具需要额外配置 API key，见 [docs/search-tools.md](docs/search-tools.md)。
+RAG 工具需要配置 `EMBED_API_KEY`；没有配置时不会注册 `rag_ingest` 和
+`rag_search`。
 
 一个工具由三部分组成：
 
@@ -182,7 +216,7 @@ export const calculatorTool: ToolDefinition = {
 
 ```ts
 const toolRegistry = new ToolRegistry()
-toolRegistry.registry(...allTools)
+toolRegistry.register(...allTools)
 ```
 
 Agent Loop 再把 registry 转成 AI SDK 需要的 tools 格式：
@@ -207,7 +241,7 @@ streamText({
 入口 [src/index.ts](src/index.ts) 会注册：
 
 ```ts
-toolRegistry.registry(pickSearchTool(), webFetchTool)
+toolRegistry.register(pickSearchTool(), webFetchTool)
 ```
 
 `pickSearchTool()` 的选择规则是：
@@ -460,6 +494,8 @@ const builder = new PromptBuilder()
   .pipe('coreRules', coreRules())
   .pipe('toolGuide', toolGuide())
   .pipe('deferredTools', deferredTools())
+  .pipe('memoryContext', () => memoryStore.buildPromptSection())
+  .pipe('ragContext', vectorStore ? ragContext(vectorStore) : () => null)
   .pipe('sessionContext', sessionContext())
 
 const SYSTEM = builder.build(promptCtx)
@@ -820,6 +856,337 @@ tracker?.record(modelId, normalizeUsage(stepUsage))
 
 这就是 `/usage` 视图里的信息来源。它让 prompt cache 从一个“服务商可能做了优化”的黑盒，变成可以观察、可以解释的工程指标。
 
+## 第四章：Memory 跨会话记忆
+
+Session 持久化保存的是“对话记录”，Memory 保存的是“以后还值得记住的信息”。
+
+这两者不要混在一起：
+
+- Session 是完整流水账：用户说了什么、模型调了什么工具、工具返回了什么。
+- Memory 是人工或 Agent 筛选后的长期线索：用户偏好、项目约定、反馈、参考资料。
+
+当前实现的目标很朴素：不做复杂数据库，直接把记忆存成 Markdown 文件。这样适合教学，也方便人类检查和修改。
+
+### 1. MemoryStore：把记忆落到 `.memory/`
+
+核心代码在 [src/memory/store.ts](src/memory/store.ts)。启动时入口会创建一个 MemoryStore：
+
+```ts
+const memoryStore = new MemoryStore('.')
+await memoryStore.init()
+toolRegistry.register(createMemoryTool(memoryStore))
+```
+
+它会在项目根目录下维护一个 `.memory/`：
+
+```text
+.memory/
+  MEMORY.md                  # prompt 里使用的紧凑索引
+  user_typescript.md          # 单条记忆
+  project_deploy-process.md   # 单条记忆
+```
+
+每条记忆是一个带 frontmatter 的 Markdown 文件：
+
+```md
+---
+name: 用户偏好 TypeScript
+description: 用户更喜欢 TypeScript 示例
+type: user
+---
+
+用户明确表示偏好 TypeScript。在需要写示例代码时，优先使用 TypeScript。
+```
+
+`type` 目前只允许四类：
+
+- `user`：用户偏好或长期信息
+- `feedback`：用户对 Agent 行为的反馈
+- `project`：当前项目的长期约定
+- `reference`：外部资料或稳定参考
+
+保存记忆时，`MemoryStore.save()` 会同时做两件事：
+
+1. 写入单条 Markdown 文件。
+2. 更新 `.memory/MEMORY.md` 索引。
+
+索引是放进 system prompt 的内容，单条文件则在需要细节时再通过工具读取。这样可以避免把所有记忆全文都塞进上下文。
+
+### 2. memory 工具：让模型自己管理记忆
+
+Memory 暴露给模型的是一个工具：[src/tools/memory-tools.ts](src/tools/memory-tools.ts)。
+
+```ts
+export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
+  return {
+    name: 'memory',
+    description:
+      '管理跨会话记忆。action: save | list | search | read | delete | lint',
+    isConcurrencySafe: false,
+    isReadOnly: false,
+    // ...
+  }
+}
+```
+
+它支持六个 action：
+
+- `save`：保存或覆盖一条记忆，需要 `name`、`type`、`content`
+- `list`：列出记忆索引
+- `search`：按关键词搜索记忆
+- `read`：按文件名读取完整记忆
+- `delete`：按文件名删除记忆
+- `lint`：检查重复、过期路径等问题
+
+这里把 `memory` 标记成 `isConcurrencySafe: false`，因为它会读写 `.memory/` 和索引文件。让它独占执行，可以避免并发保存时索引互相覆盖。
+
+### 3. memoryContext：只把索引放进 system prompt
+
+Memory 不是通过重新加载 session 实现的，而是每轮重新构建 system prompt 时注入：
+
+```ts
+const builder = new PromptBuilder()
+  .pipe('memoryContext', () => memoryStore.buildPromptSection())
+```
+
+`buildPromptSection()` 只放三类信息：
+
+- 当前有多少条记忆
+- `.memory/MEMORY.md` 索引
+- 记忆使用原则
+
+其中最重要的原则是：
+
+```text
+记忆是线索，不是事实——使用前先用工具验证（read_file、grep 确认）
+```
+
+这条规则很关键。Memory 可能过期，尤其是记录了文件路径、命令、项目结构时。Agent 可以用 Memory 帮自己定位，但不能把 Memory 当作事实来源。
+
+### 4. Slash commands：给人类看的 Memory 操作
+
+除了模型可用的 `memory` 工具，终端里还有几个命令，代码在 [src/commands/memory.ts](src/commands/memory.ts)：
+
+```text
+/memory
+/memory search <query>
+/lint
+/dream
+```
+
+这些命令在 readline 循环里被拦截，不会写进 `messages`。其中 `/dream` 比较特殊：它会构造一个整理记忆库的用户消息，然后调用 `agentLoop`，让 Agent 自己执行：
+
+1. `memory lint`
+2. 根据 lint 结果删除、合并或更新记忆
+3. 输出整理报告
+
+这就是一个很小的“睡眠整理”机制。它没有后台任务，也没有自动运行；需要用户显式输入 `/dream`。
+
+### 5. Memory 的测试
+
+Memory 有两层测试：
+
+```bash
+bun test src/memory/store.test.ts src/tools/memory-tools.test.ts
+bun run test:e2e:dream
+```
+
+单元测试验证保存、搜索、读取、删除和 lint；E2E 验证 `/dream` 能通过 Agent Loop 调用 memory 工具并清理过期记忆。
+
+## 第五章：RAG 本地知识库
+
+RAG 解决的是另一类问题：有些信息不适合存成 Memory。
+
+Memory 适合短小、长期、有主观选择的信息；RAG 适合较长的文档、制度、说明书、资料库。当前项目实现的是一个本地教学版 RAG：
+
+- 文档从本地路径导入
+- 按段落和句子分块
+- 调用 embedding API 生成向量
+- 写入本地 SQLite
+- 搜索时同时做向量检索和关键词检索
+
+### 1. 启用 RAG
+
+RAG 默认不启用，因为 embedding 需要额外 API key。入口 [src/index.ts](src/index.ts) 里是这样接线的：
+
+```ts
+const ragEnabled = Boolean(process.env.EMBED_API_KEY)
+const vectorStore = ragEnabled ? new SqliteVectorStore() : null
+
+if (ragEnabled && vectorStore) {
+  const embedFn = createDashScopeEmbedder()
+  toolRegistry.register(...createRagTools(vectorStore, embedFn))
+}
+```
+
+配置方式：
+
+```bash
+EMBED_API_KEY=你的_key bun run dev
+```
+
+启用后会多出两个工具：
+
+- `rag_ingest`：导入本地文档
+- `rag_search`：搜索已导入的知识库
+
+默认数据库文件是项目根目录的 `knowledge.db`。SQLite 开启 WAL 后，还可能生成 `knowledge.db-wal` 和 `knowledge.db-shm`。
+
+### 2. rag_ingest：文档分块、向量化、入库
+
+RAG 工具定义在 [src/tools/rag-tools.ts](src/tools/rag-tools.ts)。导入流程很短：
+
+```ts
+const text = await Bun.file(path).text()
+const chunks = chunkDocument(path, text)
+const embeddings = await embed(
+  embedFn,
+  chunks.map((c) => c.text),
+)
+vectorStore.addBatch(
+  chunks.map((c, i) => ({ chunk: c, embedding: embeddings[i] })),
+)
+```
+
+分块逻辑在 [src/rag/chunker.ts](src/rag/chunker.ts)。当前目标大小是约 256 tokens，也就是大约 1024 字符：
+
+```ts
+const TARGET_TOKENS = 256
+const CHARS_PER_TOKEN = 4
+const TARGET_CHARS = TARGET_TOKENS * CHARS_PER_TOKEN
+```
+
+它先按空行拆段落；如果单个段落过长，再按句号、问号、感叹号等句子边界切开。
+
+每个 chunk 的 id 是：
+
+```ts
+id: `${source}#${index}`
+```
+
+所以重复导入同一个文件时，同一位置的 chunk 会覆盖旧记录，而不是无限追加。
+
+### 3. embedder：把供应商细节包起来
+
+Embedding 包装在 [src/rag/embedder.ts](src/rag/embedder.ts)：
+
+```ts
+export type EmbeddingFn = (texts: string[]) => Promise<number[][]>
+```
+
+项目里所有 RAG 代码都依赖这个通用函数类型，而不是直接依赖某个供应商 SDK。当前真实实现调用 SiliconFlow embeddings API：
+
+```ts
+model: 'Qwen/Qwen3-VL-Embedding-8B'
+dimensions: 128
+```
+
+外面还有一层 `embed()` 缓存：
+
+```ts
+const embedCache = new Map<string, number[]>()
+```
+
+它只缓存当前进程内已经算过的文本向量。这个缓存不会落盘；真正持久化的是 SQLite 里的 chunk 和 embedding。
+
+### 4. SqliteVectorStore：SQLite + FTS5 混合检索
+
+存储实现在 [src/rag/sqlite-store.ts](src/rag/sqlite-store.ts)。它维护两张表：
+
+```sql
+CREATE TABLE IF NOT EXISTS chunks (
+  id TEXT PRIMARY KEY,
+  text TEXT NOT NULL,
+  source TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  estimated_tokens INTEGER NOT NULL,
+  embedding TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+  text,
+  id UNINDEXED,
+  source UNINDEXED
+);
+```
+
+`chunks` 保存原文和 JSON 序列化后的 embedding；`chunks_fts` 给关键词检索用。每次 add 时，代码会先 upsert `chunks`，再同步更新 FTS：
+
+```ts
+this.db.query('DELETE FROM chunks_fts WHERE id = ?').run(chunk.id)
+this.db
+  .query('INSERT INTO chunks_fts (id, text, source) VALUES (?, ?, ?)')
+  .run(chunk.id, chunk.text, chunk.source)
+```
+
+搜索时不是只看向量相似度，而是混合两路结果：
+
+- 向量分数权重：`0.7`
+- 关键词分数权重：`0.3`
+
+```ts
+const vectorResults = this.vectorSearch(queryVec, candidateCount)
+const keywordResults = this.keywordSearch(query, candidateCount)
+```
+
+最后用 MMR 做一次多样性选择，避免 topK 全部来自同一段高度相似文本。
+
+### 5. ragContext：告诉模型知识库当前有什么
+
+RAG 不会把知识库全文塞进 system prompt。Prompt 里只放一个摘要：
+
+```ts
+export function ragContext(vectorStore: SqliteVectorStore): PipeFn {
+  return () => {
+    const size = vectorStore.size()
+    if (size === 0) return null
+    const sources = vectorStore.sources()
+    return `[知识库] 已导入 ${size} 个文档片段（来源: ${sources.join(', ')}）。使用 rag_search 工具搜索知识库。`
+  }
+}
+```
+
+这跟 Memory 的思路一致：prompt 里放“索引和提示”，细节通过工具按需检索。
+
+### 6. 交互示例
+
+启动：
+
+```bash
+EMBED_API_KEY=你的_key bun run dev
+```
+
+然后可以直接让 Agent 导入并查询：
+
+```text
+You: 把 README.md 导入知识库
+You: 从知识库里搜一下 Tool System 的并发控制是怎么做的
+```
+
+模型会先调用 `rag_ingest`，再在后续问题里调用 `rag_search`。工具返回的结果形状类似：
+
+```text
+[1] 来源: README.md | 分数: 0.842
+...相关片段...
+```
+
+如果知识库为空，`rag_search` 会返回：
+
+```text
+知识库为空，请先导入文档。
+```
+
+### 7. RAG 的测试
+
+RAG E2E 有两种路径：
+
+```bash
+bun run test:e2e:rag
+```
+
+没有 `EMBED_API_KEY` 时，测试会使用假的 embedding 函数，验证导入、SQLite 存储和搜索排序。配置了 `EMBED_API_KEY` 时，会额外跑真实 embedding 模型测试。
+
 ## 第一章：Agent Loop
 
 ## 为什么要把 response.messages 写回 messages
@@ -966,7 +1333,7 @@ messages.push({
 bun test
 ```
 
-当前测试主要覆盖三块。
+当前测试主要覆盖这些核心模块。
 
 `loop-detection.test.ts`：
 
@@ -995,16 +1362,29 @@ bun test
 - 模型摘要失败时回退到原始 messages
 - `estimateTokens` 覆盖字符串、text part 和 tool output
 
-真实模型压缩 E2E 需要单独运行：
+`memory/store.test.ts` 和 `memory-tools.test.ts`：
+
+- 保存、列出、搜索、读取、删除记忆
+- 生成 prompt-facing memory section
+- 检测重复记忆
+- 验证 `memory` 工具的 save/list/search/read/delete/lint 行为
+
+专项 E2E 可以单独运行：
 
 ```bash
 bun run test:e2e:compression
+bun run test:e2e:defense
+bun run test:e2e:agent-loop-defense
+bun run test:e2e:dream
+bun run test:e2e:rag
 ```
 
 ## 后续实验方向
 
-当前 Agent Loop、Tool System 和 Context Engineering 的教学版都已经完成。后续如果继续写，可以作为独立实验，而不是现有章节的必做功能：
+当前 Agent Loop、Tool System、Context Engineering、Memory 和 RAG 的教学版都已经完成。后续如果继续写，可以作为独立实验，而不是现有章节的必做功能：
 
 - 把循环检测结果结构化返回给上层 UI
 - 用 trace id 记录每一轮 step、tool-call、tool-result 和 token usage
 - 把压缩摘要持久化到 session，避免每次启动都重新摘要同一段历史
+- 给 RAG 增加删除来源、重建索引和列出来源的管理工具
+- 给 Memory 增加更严格的 schema 校验或自动合并策略
