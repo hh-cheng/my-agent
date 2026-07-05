@@ -143,7 +143,7 @@ function normalizeViaSigmoid(scores: number[]) {
 function mmrSelect(results: SearchResult[], topK: number) {
   if (results.length <= topK) return results
 
-  const selected: SearchResult[] = []
+  const selected: SearchResult[] = [results[0]]
   const remaining = results.slice(1)
 
   while (selected.length < topK && remaining.length > 0) {
