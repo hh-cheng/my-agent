@@ -15,6 +15,7 @@ import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
 import { DEBUG } from './env'
+import { VectorStore } from './rag/store'
 import { MemoryStore } from './memory/store'
 import { MCPClient } from './mcp/mcp-client'
 import { UsageTracker } from './usage/tracker'
@@ -22,10 +23,13 @@ import { SessionStore } from './session/store'
 import { debugCommands } from './commands/debug'
 import { allTools } from './tools/utility-tools'
 import { memoryCommands } from './commands/memory'
+import { ragContext } from './context/prompt-pipe'
 import { createMockModel } from './mock/mock-model'
 import { contextCommands } from './commands/context'
 import { ToolRegistry } from './tools/tool-registry'
 import { createMemoryTool } from './tools/memory-tools'
+import { createDashScopeEmbedder } from './rag/embedder'
+import { createRagTools } from './tools/rag-tools'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { createDispatcher, type CommandContext } from './commands'
@@ -68,6 +72,13 @@ toolRegistry.register(createToolSearchTool(toolRegistry))
 //* Memory
 const memoryStore = new MemoryStore('.')
 toolRegistry.register(createMemoryTool(memoryStore))
+
+//* RAG
+const vectorStore = new VectorStore()
+if (process.env.EMBED_API_KEY) {
+  const embedFn = createDashScopeEmbedder()
+  toolRegistry.register(...createRagTools(vectorStore, embedFn))
+}
 
 debugLog(
   `${successLabel('工具')} 已注册 ${toolRegistry.getAll().length} 个工具`,
@@ -243,6 +254,7 @@ async function main() {
     .pipe('toolGuide', toolGuide())
     .pipe('deferredTools', deferredTools())
     .pipe('memoryContext', () => memoryStore.buildPromptSection())
+    .pipe('ragContext', ragContext(vectorStore))
     .pipe('sessionContext', sessionContext())
 
   const makePromptCtx = (): PromptContext => {
