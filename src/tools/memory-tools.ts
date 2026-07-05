@@ -4,13 +4,14 @@ import { ToolDefinition } from './tool-registry'
 export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
   return {
     name: 'memory',
-    description: '管理夸回话记忆。action: save | list | search | read | delete',
+    description:
+      '管理跨会话记忆。action: save | list | search | read | delete | lint',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['save', 'list', 'search', 'read', 'delete'],
+          enum: ['save', 'list', 'search', 'read', 'delete', 'lint'],
         },
         name: {
           type: 'string',
@@ -21,6 +22,10 @@ export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
           enum: ['user', 'feedback', 'project', 'reference'],
         },
         content: { type: 'string', description: '记忆内容 (save 时必填)' },
+        description: {
+          type: 'string',
+          description: '记忆描述 (save 时可选)',
+        },
         query: { type: 'string', description: '搜索关键词 (query 时必填)' },
         filename: {
           type: 'string',
@@ -82,6 +87,33 @@ export function createMemoryTool(memoryStore: MemoryStore): ToolDefinition {
           return (await memoryStore.delete(args.filename))
             ? `已删除: ${filename}`
             : `文件不存在: ${filename}`
+        }
+        case 'lint': {
+          const reports = await memoryStore.lint()
+          if (reports.length === 0) return '记忆库健康，没有发现问题。'
+
+          return (
+            `记忆库有 ${reports.length} 条警告:\n` +
+            reports
+              .map((r) => {
+                const filename = r.entry.filePath.split('/').pop()
+                const issues = r.issues
+                  .map((issue) => `  - ${issue.kind}: ${issue.message}`)
+                  .join('\n')
+                const preview = r.entry.content.slice(0, 500)
+                return [
+                  `文件: ${filename}`,
+                  `类型: ${r.entry.type}`,
+                  `名称: ${r.entry.name}`,
+                  `描述: ${r.entry.description}`,
+                  '问题:',
+                  issues,
+                  '内容预览:',
+                  preview,
+                ].join('\n')
+              })
+              .join('\n\n')
+          )
         }
         default:
           return `未知操作: ${action}`

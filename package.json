@@ -11,6 +11,7 @@
     "test:e2e:compression": "bun test ./e2e/compressor.e2e.ts",
     "test:e2e:defense": "bun test ./e2e/defense.e2e.ts",
     "test:e2e:agent-loop-defense": "bun test ./e2e/agent-loop-defense.e2e.ts",
+    "test:e2e:dream": "bun test ./e2e/dream.e2e.ts",
     "test:e2e:rag": "bun test ./e2e/rag.e2e.ts",
     "watch": "bun --watch src/index.ts"
   },

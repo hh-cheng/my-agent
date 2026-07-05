@@ -1,5 +1,6 @@
 import path from 'node:path'
 import { mkdir, readdir } from 'node:fs/promises'
+import { lintAll } from './validator'
 
 export interface MemoryEntry {
   name: string
@@ -7,6 +8,7 @@ export interface MemoryEntry {
   filePath: string
   description: string
   type: 'user' | 'feedback' | 'project' | 'reference'
+  lastReadAt?: number
 }
 
 const MEMORY_DIR = '.memory'
@@ -139,11 +141,17 @@ export class MemoryStore {
       '记忆索引: ',
       index,
       '',
-      '使用 memory 工具的 read 操作来读取具体记忆内容。',
-      '记忆是线索，不是事实 —— 使用前先验证其准确性。',
+      '记忆使用原则：',
+      '- 记忆是线索，不是事实——使用前先用工具验证（read_file、grep 确认）',
+      '- 不存代码能推导的、git 能查的、文档已经写了的',
+      '- 只存对话中出现的、其他地方推导不出来的信息',
     ]
 
     return lines.join('\n')
+  }
+
+  async lint() {
+    return lintAll(await this.list(), this.baseDir)
   }
 
   private async updateIndex(

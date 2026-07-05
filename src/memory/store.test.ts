@@ -50,4 +50,28 @@ describe('MemoryStore', () => {
     expect(await store.delete(filename)).toBe(true)
     expect(await store.list()).toEqual([])
   })
+
+  test('lints duplicate memory names', async () => {
+    const store = await createStore()
+
+    await store.save({
+      name: 'Deploy process',
+      description: 'User deploy process',
+      type: 'user',
+      content: 'Run ./deploy.sh before release.',
+    })
+    await store.save({
+      name: 'Deploy process',
+      description: 'Project deploy process',
+      type: 'project',
+      content: 'Deploy notes live in docs/deploy.md.',
+    })
+
+    const reports = await store.lint()
+
+    expect(reports).toHaveLength(2)
+    expect(reports.flatMap((r) => r.issues.map((i) => i.kind))).toContain(
+      'duplicate_name',
+    )
+  })
 })

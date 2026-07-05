@@ -366,6 +366,7 @@ async function main() {
   console.log('/usage — 累计 token 用量、cache 命中率、节省金额')
   console.log('/status — 当前消息数和 token 估算')
   console.log('/memory — 查看记忆')
+  console.log('/dream — 自动整理过期和重复记忆')
   console.log(
     logStyle.dim(
       '对话会自动保存。用 bun run continue 恢复上次对话；加 --debug 查看辅助信息。\n',
