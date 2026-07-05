@@ -1,13 +1,16 @@
+import 'dotenv/config'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
-import { VectorStore } from '@/rag/store'
-import type { EmbeddingFn } from '@/rag/embedder'
+import { createDashScopeEmbedder, type EmbeddingFn } from '@/rag/embedder'
 import { createRagTools } from '@/tools/rag-tools'
+import { SqliteVectorStore } from '@/rag/sqlite-store'
 
 let tmpRoot: string
+let vectorStore: SqliteVectorStore
+const runIfEmbedKey: typeof test = process.env.EMBED_API_KEY ? test : test.skip
 
 const fakeEmbedder: EmbeddingFn = async (texts) => {
   return texts.map((text) => {
@@ -28,9 +31,11 @@ function scoreTerms(text: string, terms: string[]) {
 describe('RAG E2E', () => {
   beforeEach(async () => {
     tmpRoot = await mkdtemp(join(tmpdir(), 'my-agent-rag-'))
+    vectorStore = new SqliteVectorStore(join(tmpRoot, 'knowledge.db'))
   })
 
   afterEach(async () => {
+    vectorStore.close()
     await rm(tmpRoot, { recursive: true, force: true })
   })
 
@@ -57,7 +62,6 @@ describe('RAG E2E', () => {
       ].join('\n'),
     )
 
-    const vectorStore = new VectorStore()
     const tools = createRagTools(vectorStore, fakeEmbedder)
     const ingest = tools.find((tool) => tool.name === 'rag_ingest')
     const search = tools.find((tool) => tool.name === 'rag_search')
@@ -80,4 +84,54 @@ describe('RAG E2E', () => {
     expect(result).toContain('预算审批')
     expect(result).not.toContain('recipe.md')
   })
+
+  runIfEmbedKey(
+    'ingests and searches with the real embedding model',
+    async () => {
+      const financePath = join(tmpRoot, 'finance-real.md')
+      const recipePath = join(tmpRoot, 'recipe-real.md')
+
+      await Bun.write(
+        financePath,
+        [
+          '# 财务制度',
+          '',
+          '预算审批流程要求申请人先提交采购申请。',
+          '报销金额超过五千元时，必须由部门负责人复核。',
+        ].join('\n'),
+      )
+      await Bun.write(
+        recipePath,
+        [
+          '# 烘焙食谱',
+          '',
+          '黄油曲奇需要面粉、黄油和糖。',
+          '烘焙前需要预热烤箱并准备烤盘。',
+        ].join('\n'),
+      )
+
+      const tools = createRagTools(vectorStore, createDashScopeEmbedder())
+      const ingest = tools.find((tool) => tool.name === 'rag_ingest')
+      const search = tools.find((tool) => tool.name === 'rag_search')
+
+      expect(ingest).toBeDefined()
+      expect(search).toBeDefined()
+
+      await ingest?.execute({ path: financePath })
+      await ingest?.execute({ path: recipePath })
+
+      const result = String(
+        await search?.execute({
+          query: '预算审批和采购申请的流程',
+          top_k: 1,
+        }),
+      )
+
+      expect(vectorStore.size()).toBe(2)
+      expect(result).toContain('finance-real.md')
+      expect(result).toContain('预算审批')
+      expect(result).not.toContain('recipe-real.md')
+    },
+    30_000,
+  )
 })

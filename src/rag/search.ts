@@ -140,7 +140,7 @@ function normalizeViaSigmoid(scores: number[]) {
 //* === 归一化 END ===
 
 //* === MMR 去重 START ===
-function mmrSelect(results: SearchResult[], topK: number) {
+export function mmrSelect(results: SearchResult[], topK: number) {
   if (results.length <= topK) return results
 
   const selected: SearchResult[] = [results[0]]

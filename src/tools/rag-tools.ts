@@ -1,11 +1,10 @@
-import { hybridSearch } from '@/rag/search'
 import { chunkDocument } from '@/rag/chunker'
-import type { VectorStore } from '@/rag/store'
+import type { SqliteVectorStore } from '@/rag/sqlite-store'
 import type { ToolDefinition } from './tool-registry'
 import { embed, type EmbeddingFn } from '@/rag/embedder'
 
 export function createRagTools(
-  vectorStore: VectorStore,
+  vectorStore: SqliteVectorStore,
   embedFn: EmbeddingFn,
 ): ToolDefinition[] {
   const ragIngestTool: ToolDefinition = {
@@ -45,12 +44,7 @@ export function createRagTools(
     },
     execute: async ({ query, top_k }: { query: string; top_k?: number }) => {
       if (vectorStore.size() === 0) return '知识库为空，请先导入文档。'
-      const results = await hybridSearch(
-        vectorStore,
-        embedFn,
-        query,
-        top_k || 5,
-      )
+      const results = await vectorStore.hybridSearch(embedFn, query, top_k || 5)
       return results
         .map(
           (r, i) =>

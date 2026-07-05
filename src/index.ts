@@ -15,7 +15,6 @@ import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
 import { DEBUG } from './env'
-import { VectorStore } from './rag/store'
 import { MemoryStore } from './memory/store'
 import { MCPClient } from './mcp/mcp-client'
 import { UsageTracker } from './usage/tracker'
@@ -30,6 +29,7 @@ import { ToolRegistry } from './tools/tool-registry'
 import { createMemoryTool } from './tools/memory-tools'
 import { createDashScopeEmbedder } from './rag/embedder'
 import { createRagTools } from './tools/rag-tools'
+import { SqliteVectorStore } from './rag/sqlite-store'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { createDispatcher, type CommandContext } from './commands'
@@ -74,8 +74,9 @@ const memoryStore = new MemoryStore('.')
 toolRegistry.register(createMemoryTool(memoryStore))
 
 //* RAG
-const vectorStore = new VectorStore()
-if (process.env.EMBED_API_KEY) {
+const ragEnabled = Boolean(process.env.EMBED_API_KEY)
+const vectorStore = ragEnabled ? new SqliteVectorStore() : null
+if (ragEnabled && vectorStore) {
   const embedFn = createDashScopeEmbedder()
   toolRegistry.register(...createRagTools(vectorStore, embedFn))
 }
@@ -254,7 +255,7 @@ async function main() {
     .pipe('toolGuide', toolGuide())
     .pipe('deferredTools', deferredTools())
     .pipe('memoryContext', () => memoryStore.buildPromptSection())
-    .pipe('ragContext', ragContext(vectorStore))
+    .pipe('ragContext', vectorStore ? ragContext(vectorStore) : () => null)
     .pipe('sessionContext', sessionContext())
 
   const makePromptCtx = (): PromptContext => {
@@ -283,6 +284,7 @@ async function main() {
 
     if (!rlClosed) rl.close()
     await toolRegistry.closeAllMCP()
+    vectorStore?.close()
   }
 
   process.once('SIGINT', async () => {
