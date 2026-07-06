@@ -1,15 +1,3 @@
-import { SkillLoader } from './skills/loader'
-/**
- * Super Agent 入口（v0.2）
- *
- * 从上一篇的 ChatBot 演进为 Agent，代码层面变化不大，但行为质变——
- * AI 从"只会说"变成了"能做"：
- *
- * - 定义工具（description + inputSchema + execute）→ tools/utility-tools.ts
- * - streamText 传入 tools
- * - 用 fullStream 替代 textStream，处理工具调用事件 → agent/loop.ts
- * - while 循环支持多步执行 → agent/loop.ts
- */
 import 'dotenv/config'
 import { type ModelMessage } from 'ai'
 import { createInterface } from 'node:readline'
@@ -18,19 +6,21 @@ import { createDeepSeek } from '@ai-sdk/deepseek'
 import { DEBUG } from './env'
 import { MemoryStore } from './memory/store'
 import { MCPClient } from './mcp/mcp-client'
+import { SkillLoader } from './skills/loader'
 import { UsageTracker } from './usage/tracker'
 import { SessionStore } from './session/store'
 import { debugCommands } from './commands/debug'
 import { allTools } from './tools/utility-tools'
+import { createRagTools } from './tools/rag-tools'
 import { memoryCommands } from './commands/memory'
 import { ragContext } from './context/prompt-pipe'
 import { createMockModel } from './mock/mock-model'
 import { contextCommands } from './commands/context'
 import { ToolRegistry } from './tools/tool-registry'
+import { SqliteVectorStore } from './rag/sqlite-store'
+import { createSkillCommands } from './commands/skills'
 import { createMemoryTool } from './tools/memory-tools'
 import { createDashScopeEmbedder } from './rag/embedder'
-import { createRagTools } from './tools/rag-tools'
-import { SqliteVectorStore } from './rag/sqlite-store'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { createDispatcher, type CommandContext } from './commands'
@@ -50,7 +40,6 @@ import {
   deferredTools,
   sessionContext,
 } from './context/prompts'
-import { createSkillCommands } from './commands/skills'
 
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -65,17 +54,17 @@ const modelName = process.env.DEEPSEEK_API_KEY
   ? 'DeepSeek V4 Flash'
   : 'Mock Model'
 
-//* 工具注册：streamText 通过 tools 参数暴露给模型
+//* === 工具注册：streamText 通过 tools 参数暴露给模型 ===
 const toolRegistry = new ToolRegistry()
 toolRegistry.register(...allTools)
 toolRegistry.register(pickSearchTool(), webFetchTool)
 toolRegistry.register(createToolSearchTool(toolRegistry))
 
-//* Memory
+//* === Memory ===
 const memoryStore = new MemoryStore('.')
 toolRegistry.register(createMemoryTool(memoryStore))
 
-//* RAG
+//* === RAG ===
 const ragEnabled = Boolean(process.env.EMBED_API_KEY)
 const vectorStore = ragEnabled ? new SqliteVectorStore() : null
 if (ragEnabled && vectorStore) {
@@ -83,7 +72,7 @@ if (ragEnabled && vectorStore) {
   toolRegistry.register(...createRagTools(vectorStore, embedFn))
 }
 
-//* skills
+//* === skills ===
 const skillLoader = new SkillLoader('.')
 const activeSkills = new Set<string>()
 
@@ -102,7 +91,7 @@ for (const tool of toolRegistry.getAll()) {
 //* 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
 const budget: BudgetState = { used: 0, limit: 200_000 }
 
-//* 命令
+//* === 命令 ===
 const dispatch = createDispatcher([
   ...debugCommands,
   ...contextCommands,
@@ -110,7 +99,7 @@ const dispatch = createDispatcher([
   ...createSkillCommands(skillLoader, activeSkills),
 ])
 
-//* timestamps 记录每条消息进入上下文的时间，用于 context defense 的 TTL 修剪
+//* === timestamps 记录每条消息进入上下文的时间，用于 context defense 的 TTL 修剪 ===
 function setTimestampMessages(
   messages: ModelMessage[],
   timestamps: Map<number, number>,
@@ -131,7 +120,7 @@ function syncTimestamps(
   }
 }
 
-//* 统一执行上下文防线：同步 timestamps、应用裁剪/压缩策略，并回写 messages
+//* === 统一执行上下文防线：同步 timestamps、应用裁剪/压缩策略，并回写 messages ===
 function defendMessages(
   messages: ModelMessage[],
   timestamps: Map<number, number>,
@@ -165,7 +154,7 @@ function defendMessages(
   return defense
 }
 
-//* MCP
+//* === MCP ===
 async function connectMCP() {
   const githubToken = process.env.GITHUB_PERSONAL_ACCESS_TOKEN
 
