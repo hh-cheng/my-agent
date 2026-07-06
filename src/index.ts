@@ -1,3 +1,4 @@
+import { SkillLoader } from './skills/loader'
 /**
  * Super Agent 入口（v0.2）
  *
@@ -49,6 +50,7 @@ import {
   deferredTools,
   sessionContext,
 } from './context/prompts'
+import { createSkillCommands } from './commands/skills'
 
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -81,6 +83,10 @@ if (ragEnabled && vectorStore) {
   toolRegistry.register(...createRagTools(vectorStore, embedFn))
 }
 
+//* skills
+const skillLoader = new SkillLoader('.')
+const activeSkills = new Set<string>()
+
 debugLog(
   `${successLabel('工具')} 已注册 ${toolRegistry.getAll().length} 个工具`,
 )
@@ -101,6 +107,7 @@ const dispatch = createDispatcher([
   ...debugCommands,
   ...contextCommands,
   ...memoryCommands,
+  ...createSkillCommands(skillLoader, activeSkills),
 ])
 
 //* timestamps 记录每条消息进入上下文的时间，用于 context defense 的 TTL 修剪
@@ -256,6 +263,7 @@ async function main() {
     .pipe('deferredTools', deferredTools())
     .pipe('memoryContext', () => memoryStore.buildPromptSection())
     .pipe('ragContext', vectorStore ? ragContext(vectorStore) : () => null)
+    .pipe('skillContext', () => skillLoader.buildPromptSection(activeSkills))
     .pipe('sessionContext', sessionContext())
 
   const makePromptCtx = (): PromptContext => {
@@ -299,7 +307,7 @@ async function main() {
 
     rl.question('\nYou: ', async (ipt) => {
       const trimmed = ipt.trim()
-      if (!trimmed || trimmed.toLowerCase() === 'exit') {
+      if (!trimmed || /\/?exit/.test(trimmed.toLocaleLowerCase())) {
         console.log('Bye!')
         await shutdown()
         return
@@ -359,14 +367,9 @@ async function main() {
   }
 
   console.log(
-    logStyle.banner('Super Agent v0.10 — Cache & Cost') +
-      logStyle.dim(' (type "exit" to quit)'),
+    logStyle.banner('Super Agent') +
+      logStyle.dim(' (type "/exit" or "exit" to quit)'),
   )
-  console.log('/context — 终端里看 context 占用矩阵（参考 Claude Code）')
-  console.log('/usage — 累计 token 用量、cache 命中率、节省金额')
-  console.log('/status — 当前消息数和 token 估算')
-  console.log('/memory — 查看记忆')
-  console.log('/dream — 自动整理过期和重复记忆')
   console.log(
     logStyle.dim(
       '对话会自动保存。用 bun run continue 恢复上次对话；加 --debug 查看辅助信息。\n',
