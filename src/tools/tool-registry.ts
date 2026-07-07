@@ -87,6 +87,11 @@ export class ToolRegistry {
     }
   }
 
+  unregister(name: string) {
+    this.discoveredTools.delete(name)
+    return this.tools.delete(name)
+  }
+
   get(name: string) {
     return this.tools.get(name)
   }

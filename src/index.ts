@@ -11,6 +11,8 @@ import { UsageTracker } from './usage/tracker'
 import { SessionStore } from './session/store'
 import { debugCommands } from './commands/debug'
 import { allTools } from './tools/utility-tools'
+import { PluginManager } from './plugins/manager'
+import { PluginDefinition } from './plugins/types'
 import { createRagTools } from './tools/rag-tools'
 import { memoryCommands } from './commands/memory'
 import { ragContext } from './context/prompt-pipe'
@@ -21,6 +23,7 @@ import { SqliteVectorStore } from './rag/sqlite-store'
 import { createSkillCommands } from './commands/skills'
 import { createMemoryTool } from './tools/memory-tools'
 import { createDashScopeEmbedder } from './rag/embedder'
+import { createPluginCommands } from './commands/plugin'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { createDispatcher, type CommandContext } from './commands'
@@ -91,12 +94,17 @@ for (const tool of toolRegistry.getAll()) {
 //* 预算由调用方持有，跨轮持续累积 - agentLoop 只负责消费
 const budget: BudgetState = { used: 0, limit: 200_000 }
 
+//* === plugins ===
+const pluginManager = new PluginManager(toolRegistry)
+const availablePlugins = new Map<string, PluginDefinition>()
+
 //* === 命令 ===
 const dispatch = createDispatcher([
   ...debugCommands,
   ...contextCommands,
   ...memoryCommands,
   ...createSkillCommands(skillLoader, activeSkills),
+  ...createPluginCommands(pluginManager, availablePlugins),
 ])
 
 //* === timestamps 记录每条消息进入上下文的时间，用于 context defense 的 TTL 修剪 ===
