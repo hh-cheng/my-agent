@@ -80,6 +80,7 @@ if (ragEnabled && vectorStore) {
 
 //* === skills ===
 const skillLoader = new SkillLoader('.')
+skillLoader.load()
 const activeSkills = new Set<string>()
 
 debugLog(

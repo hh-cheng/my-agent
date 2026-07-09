@@ -37,6 +37,7 @@ export class SkillLoader {
         name: entry.name,
         content: parsed.content,
         description: parsed.description,
+        whenToUse: parsed.whenToUse,
         dirPath: path.join(skillsDir, entry.name),
       })
     }
@@ -92,6 +93,10 @@ export class SkillLoader {
       }
     }
 
-    return { description: meta.description || '', content: match[2].trim() }
+    return {
+      content: match[2].trim(),
+      description: meta.description || '',
+      whenToUse: meta.when_to_use || meta.whenToUse,
+    }
   }
 }
