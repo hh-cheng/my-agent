@@ -1,16 +1,25 @@
 import { errorLabel, logger, toolLabel } from '@/logging'
+import type { ChannelGateway } from '@/channels/gateway'
 import type { ToolRegistry } from '@/tools/tool-registry'
 import type { PluginDefinition, PluginConfig, PluginApi } from './types'
 
 interface LoadedPlugin {
   tools: string[]
+  channels: string[]
   definition: PluginDefinition
 }
 
 export class PluginManager {
   private plugins = new Map<string, LoadedPlugin>()
 
-  constructor(private registry: ToolRegistry) {}
+  constructor(
+    private registry: ToolRegistry,
+    private channelGateway?: ChannelGateway,
+  ) {}
+
+  setChannelGateway(gateway: ChannelGateway) {
+    this.channelGateway = gateway
+  }
 
   async load(definition: PluginDefinition, config?: PluginConfig) {
     if (this.plugins.has(definition.name)) {
@@ -23,8 +32,20 @@ export class PluginManager {
     })
 
     const registeredTools: string[] = []
+    const registeredChannels: string[] = []
 
     const api: PluginApi = {
+      registerChannel: (channel) => {
+        if (!this.channelGateway) {
+          throw new Error('ChannelGateway 未配置，无法注册插件通道')
+        }
+
+        this.channelGateway.register(channel)
+        registeredChannels.push(channel.name)
+        logger.raw(
+          `${toolLabel(`plugin:${definition.name}`)} 注册通道 ${channel.name}`,
+        )
+      },
       registerTools: (tools) => {
         this.registry.register(...tools)
         registeredTools.push(...tools.map((tool) => tool.name))
@@ -48,6 +69,7 @@ export class PluginManager {
     this.plugins.set(definition.name, {
       definition,
       tools: registeredTools,
+      channels: registeredChannels,
     })
 
     return registeredTools
@@ -68,6 +90,12 @@ export class PluginManager {
 
     for (const toolName of plugin.tools) {
       this.registry.unregister(toolName)
+    }
+
+    if (this.channelGateway) {
+      for (const channelName of plugin.channels) {
+        await this.channelGateway.unregister(channelName)
+      }
     }
 
     this.plugins.delete(name)

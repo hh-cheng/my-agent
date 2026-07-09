@@ -17,6 +17,7 @@ import { createRagTools } from './tools/rag-tools'
 import { memoryCommands } from './commands/memory'
 import { ragContext } from './context/prompt-pipe'
 import { createMockModel } from './mock/mock-model'
+import { ChannelGateway } from './channels/gateway'
 import { contextCommands } from './commands/context'
 import { ToolRegistry } from './tools/tool-registry'
 import { SqliteVectorStore } from './rag/sqlite-store'
@@ -26,6 +27,8 @@ import { createDashScopeEmbedder } from './rag/embedder'
 import { createPluginCommands } from './commands/plugin'
 import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
+import { createChannelCommands } from './commands/channel'
+import { createFeishuPlugin } from './channels/adapters/feishu'
 import { createDispatcher, type CommandContext } from './commands'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
 import { applyDefense, estimateMessageTokens } from './context/defense'
@@ -96,15 +99,9 @@ const budget: BudgetState = { used: 0, limit: 200_000 }
 
 //* === plugins ===
 const pluginManager = new PluginManager(toolRegistry)
-const availablePlugins = new Map<string, PluginDefinition>()
-
-//* === 命令 ===
-const dispatch = createDispatcher([
-  ...debugCommands,
-  ...contextCommands,
-  ...memoryCommands,
-  ...createSkillCommands(skillLoader, activeSkills),
-  ...createPluginCommands(pluginManager, availablePlugins),
+const feishuPlugin = createFeishuPlugin()
+const availablePlugins = new Map<string, PluginDefinition>([
+  [feishuPlugin.name, feishuPlugin],
 ])
 
 //* === timestamps 记录每条消息进入上下文的时间，用于 context defense 的 TTL 修剪 ===
@@ -274,6 +271,26 @@ async function main() {
 
   if (DEBUG) await builder.debug(makePromptCtx())
 
+  //* === Channel Gateway ===
+  const gateway = new ChannelGateway({
+    model,
+    registry: toolRegistry,
+    buildSystem: () => builder.build(makePromptCtx()),
+  })
+  pluginManager.setChannelGateway(gateway)
+  await pluginManager.load(feishuPlugin)
+  await gateway.startAll()
+
+  //* === 命令 ===
+  const dispatch = createDispatcher([
+    ...debugCommands,
+    ...memoryCommands,
+    ...contextCommands,
+    ...createChannelCommands(gateway),
+    ...createSkillCommands(skillLoader, activeSkills),
+    ...createPluginCommands(pluginManager, availablePlugins),
+  ])
+
   //* === 交互循环 ===
   const rl = createInterface({ input: process.stdin, output: process.stdout })
   let rlClosed = false
@@ -288,6 +305,7 @@ async function main() {
     shuttingDown = true
 
     if (!rlClosed) rl.close()
+    await gateway.stopAll()
     await toolRegistry.closeAllMCP()
     vectorStore?.close()
   }

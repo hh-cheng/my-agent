@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 
 import { createDispatcher } from '@/commands'
 import { createPluginCommands } from '@/commands/plugin'
+import { ChannelGateway } from '@/channels/gateway'
+import type { ChannelDefinition } from '@/channels/types'
+import { createMockModel } from '@/mock/mock-model'
 import { PluginManager } from '@/plugins/manager'
 import type { PluginDefinition } from '@/plugins/types'
 import { ToolRegistry } from '@/tools/tool-registry'
@@ -129,5 +132,45 @@ describe('plugins E2E', () => {
     logs = []
     expect(await dispatch('/plugin unload echo-plugin', ctx)).toBe(true)
     expect(output()).toContain('echo-plugin 未加载')
+  })
+
+  test('loads and unloads plugin channels', async () => {
+    const registry = new ToolRegistry()
+    const gateway = new ChannelGateway({
+      registry,
+      model: createMockModel(),
+      buildSystem: () => 'test system',
+    })
+    const manager = new PluginManager(registry, gateway)
+
+    const channel: ChannelDefinition = {
+      name: 'plugin-channel',
+      description: 'Channel from plugin',
+      start() {},
+      stop() {},
+      async send() {},
+    }
+
+    const plugin: PluginDefinition = {
+      name: 'channel-plugin',
+      version: '1.0.0',
+      description: 'E2E channel plugin',
+      activate(api) {
+        api.registerChannel(channel)
+      },
+    }
+
+    await manager.load(plugin)
+
+    expect(gateway.list()).toEqual([
+      {
+        name: 'plugin-channel',
+        description: 'Channel from plugin',
+      },
+    ])
+    expect(output()).toContain('注册通道 plugin-channel')
+
+    expect(await manager.unload('channel-plugin')).toBe(true)
+    expect(gateway.list()).toEqual([])
   })
 })
