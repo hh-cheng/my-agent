@@ -1,11 +1,15 @@
 import { jsonSchema, type streamText } from 'ai'
 
+import { logger, toolLabel } from '@/logging'
+import { HookPipeline } from '@/security/hooks'
 import type { MCPClient } from '@/mcp/mcp-client'
-import { toolLabel } from '@/logging'
+import { canUseTool, type Role } from '@/security/roles'
+import { classifyBashCommand } from '@/security/bash-classifier'
 
 export interface ToolDefinition {
   //* 给 LLM 看的元信息
   name: string
+  profile?: string[]
   description: string // 给 LLM 看的描述
   parameters: Parameters<typeof jsonSchema>[0] // JSON Schema 定义的参数
   execute: (input: any) => Promise<unknown> // 执行工具的函数
@@ -38,7 +42,10 @@ function truncate(text: string, maxChars = DEFAULT_MAX_RESULT_CHARS) {
 }
 
 export class ToolRegistry {
+  private currentRole: Role = 'owner'
+  private activeProfile = 'full'
   private tools = new Map<string, ToolDefinition>()
+  private hookPipeline?: HookPipeline
 
   // 三个状态变量构成一把读写锁
   private exclusiveLock = false // 当前是否有独占锁的持有者
@@ -92,6 +99,26 @@ export class ToolRegistry {
     return this.tools.delete(name)
   }
 
+  setProfile(profile: string) {
+    this.activeProfile = profile
+  }
+
+  getProfile() {
+    return this.activeProfile
+  }
+
+  setRole(role: Role) {
+    this.currentRole = role
+  }
+
+  getRole() {
+    return this.currentRole
+  }
+
+  setHookPipeline(pipeline: HookPipeline) {
+    this.hookPipeline = pipeline
+  }
+
   get(name: string) {
     return this.tools.get(name)
   }
@@ -104,30 +131,70 @@ export class ToolRegistry {
     const result: StreamTextTools = {}
 
     for (const tool of this.getActiveTools()) {
-      const name = tool.name
+      const toolName = tool.name
       const registry = this
       const executeFn = tool.execute
       const maxChars = tool.maxResultChars
+      const hookPipeline = this.hookPipeline
       const isConcurrentSafe = tool.isConcurrencySafe ?? false
 
-      result[name] = {
+      result[toolName] = {
         description: tool.description,
         inputSchema: jsonSchema(tool.parameters),
         execute: async (ipt: any) => {
-          // 在真正执行前先按 isConcurrentSafe 获取锁
+          // Bash 风险监测
+          if (toolName === 'bash' && ipt?.command) {
+            const risk = classifyBashCommand(ipt.command)
+            if (risk.level === 'dangerous') {
+              return `[拒绝执行 ${ipt.command}] 检测到危险操作: ${risk.reason}\n`
+            }
+            if (risk.level === 'moderate') {
+              logger.warn(`[安全警告 ${ipt.command}] ${risk.reason}`)
+            }
+          }
+
+          //* preHook
+          if (hookPipeline) {
+            const preResult = await hookPipeline.runPre(toolName, ipt)
+            if (preResult.action === 'block') {
+              return `[Hook 拦截] ${preResult.reason || '操作被阻拦'}`
+            }
+            if (
+              preResult.action === 'modify' &&
+              preResult.modifiedInput !== undefined
+            ) {
+              ipt = preResult.modifiedInput
+            }
+          }
+
           if (isConcurrentSafe) {
+            // 在真正执行前先按 isConcurrentSafe 获取锁
             await registry.acquireConcurrent()
-            console.log(`${toolLabel('并发')} ${name} 获取共享锁`)
+            console.log(`${toolLabel('并发')} ${toolName} 获取共享锁`)
           } else {
             await registry.acquireExclusive()
-            console.log(`${toolLabel('独占')} ${name} 获取独占锁`)
+            console.log(`${toolLabel('独占')} ${toolName} 获取独占锁`)
           }
 
           try {
             const raw = await executeFn(ipt)
             const text =
               typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2)
-            return truncate(text, maxChars)
+            let output = truncate(text, maxChars)
+
+            //* postHook
+            if (hookPipeline) {
+              const postResult = await hookPipeline.runPost(
+                toolName,
+                ipt,
+                output,
+              )
+              if (postResult.modifiedOutput !== undefined) {
+                output = String(postResult.modifiedOutput)
+              }
+            }
+
+            return output
           } finally {
             // 不管成功还是抛异常都要释放锁
             if (isConcurrentSafe) {
@@ -163,6 +230,7 @@ export class ToolRegistry {
 
       this.register({
         name: prefixedName,
+        profile: ['full'],
         description: `[MCP:${serverName}] ${tool.description}`,
         parameters: tool.inputSchema,
         isConcurrencySafe: true,
@@ -223,7 +291,16 @@ export class ToolRegistry {
 
   getActiveTools() {
     return this.getAll().filter((tool) => {
-      return !(tool.shouldDefer && !this.discoveredTools.has(tool.name))
+      if (tool.profile && !tool.profile.includes(this.activeProfile)) {
+        return false
+      }
+      if (tool.shouldDefer && !this.discoveredTools.has(tool.name)) {
+        return false
+      }
+      if (!canUseTool(this.currentRole, tool.name)) {
+        return false
+      }
+      return true
     })
   }
 

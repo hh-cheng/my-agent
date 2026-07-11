@@ -9,6 +9,7 @@ import { MCPClient } from './mcp/mcp-client'
 import { SkillLoader } from './skills/loader'
 import { UsageTracker } from './usage/tracker'
 import { SessionStore } from './session/store'
+import { HookPipeline } from './security/hooks'
 import { debugCommands } from './commands/debug'
 import { allTools } from './tools/utility-tools'
 import { PluginManager } from './plugins/manager'
@@ -29,6 +30,8 @@ import { createToolSearchTool } from './tools/tool-search'
 import { agentLoop, type BudgetState } from './agent/loop'
 import { createChannelCommands } from './commands/channel'
 import { createFeishuPlugin } from './channels/adapters/feishu'
+import { createSecurityCommands } from './commands/security'
+import { registeredPipelines } from './security/hook-instances'
 import { createDispatcher, type CommandContext } from './commands'
 import { pickSearchTool, webFetchTool } from './tools/search-tools'
 import { applyDefense, estimateMessageTokens } from './context/defense'
@@ -104,6 +107,16 @@ const feishuPlugin = createFeishuPlugin()
 const availablePlugins = new Map<string, PluginDefinition>([
   [feishuPlugin.name, feishuPlugin],
 ])
+
+//* === pipelines ===
+const hookPipelines = new HookPipeline()
+registeredPipelines.pre.forEach(({ name, pipeline }) =>
+  hookPipelines.registerPre(name, pipeline),
+)
+registeredPipelines.post.forEach(({ name, pipeline }) =>
+  hookPipelines.registerPost(name, pipeline),
+)
+toolRegistry.setHookPipeline(hookPipelines)
 
 //* === timestamps 记录每条消息进入上下文的时间，用于 context defense 的 TTL 修剪 ===
 function setTimestampMessages(
@@ -290,6 +303,7 @@ async function main() {
     ...createChannelCommands(gateway),
     ...createSkillCommands(skillLoader, activeSkills),
     ...createPluginCommands(pluginManager, availablePlugins),
+    ...createSecurityCommands(toolRegistry, hookPipelines),
   ])
 
   //* === 交互循环 ===
