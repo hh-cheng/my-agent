@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline'
 import { createDeepSeek } from '@ai-sdk/deepseek'
 
 import { DEBUG } from './env'
+import { CronService } from './cron/service'
 import { MemoryStore } from './memory/store'
 import { MCPClient } from './mcp/mcp-client'
 import { SkillLoader } from './skills/loader'
@@ -19,6 +20,7 @@ import { memoryCommands } from './commands/memory'
 import { ragContext } from './context/prompt-pipe'
 import { createMockModel } from './mock/mock-model'
 import { ChannelGateway } from './channels/gateway'
+import { createCronTool } from './tools/cron-tools'
 import { contextCommands } from './commands/context'
 import { ToolRegistry } from './tools/tool-registry'
 import { SqliteVectorStore } from './rag/sqlite-store'
@@ -39,6 +41,7 @@ import { PromptBuilder, type PromptContext } from './context/prompt-builder'
 import {
   debugLabel,
   debugLog,
+  logger,
   logStyle,
   successLabel,
   warnLabel,
@@ -49,6 +52,7 @@ import {
   deferredTools,
   sessionContext,
 } from './context/prompts'
+import { createCronCommands } from './commands/cron'
 
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -117,6 +121,10 @@ registeredPipelines.post.forEach(({ name, pipeline }) =>
   hookPipelines.registerPost(name, pipeline),
 )
 toolRegistry.setHookPipeline(hookPipelines)
+
+//* === Cron Service ===
+const cronService = new CronService('.')
+toolRegistry.register(createCronTool(cronService))
 
 //* === timestamps 记录每条消息进入上下文的时间，用于 context defense 的 TTL 修剪 ===
 function setTimestampMessages(
@@ -295,12 +303,49 @@ async function main() {
   await pluginManager.load(feishuPlugin)
   await gateway.startAll()
 
+  //* === Cron Service ===
+  cronService.load()
+  cronService.setExecutor({
+    runAgentPrompt: async (prompt, _timeout) => {
+      const cronMessages: ModelMessage[] = [{ role: 'user', content: prompt }]
+      const system = await builder.build(makePromptCtx())
+      await agentLoop({
+        model,
+        budget,
+        tracker,
+        modelId,
+        messages: cronMessages,
+        system,
+        tools: toolRegistry,
+      })
+      const lastMsg = cronMessages[cronMessages.length - 1]
+      if (!lastMsg) return '(无输出)'
+      if (typeof lastMsg.content === 'string') return lastMsg.content
+      if (Array.isArray(lastMsg.content)) {
+        return (
+          lastMsg.content
+            .filter((p: any) => p.type === 'text')
+            .map((p: any) => p.text)
+            .join('') || '(无输出)'
+        )
+      }
+      return String(lastMsg.content)
+    },
+    notify: (message) => {
+      logger.info(`\n${message}`)
+    },
+  })
+  cronService.start()
+  const cronJobs = cronService.list()
+  logger.success(`Cron: ${cronJobs.length} 个任务已加载`)
+
   //* === 命令 ===
   const dispatch = createDispatcher([
     ...debugCommands,
     ...memoryCommands,
     ...contextCommands,
     ...createChannelCommands(gateway),
+    ...createCronCommands(cronService),
     ...createSkillCommands(skillLoader, activeSkills),
     ...createPluginCommands(pluginManager, availablePlugins),
     ...createSecurityCommands(toolRegistry, hookPipelines),
@@ -322,6 +367,7 @@ async function main() {
     if (!rlClosed) rl.close()
     await gateway.stopAll()
     await toolRegistry.closeAllMCP()
+    cronService.stop()
     vectorStore?.close()
   }
 

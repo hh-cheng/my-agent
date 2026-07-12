@@ -45,6 +45,7 @@
     "@larksuiteoapi/node-sdk": "^1.70.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "ai": "^6.0.191",
+    "croner": "^10.0.1",
     "dotenv": "^17.4.2",
     "picocolors": "^1.1.1",
     "turndown": "^7.2.4",
