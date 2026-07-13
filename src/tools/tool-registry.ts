@@ -127,6 +127,31 @@ export class ToolRegistry {
     return Array.from(this.tools.values())
   }
 
+  toAISDKFormatUnlocked(excludeTools?: Set<string>) {
+    const result: Record<string, any> = {}
+
+    const activeTools = this.getActiveTools().filter(
+      (t) => !excludeTools?.has(t.name),
+    )
+
+    for (const tool of activeTools) {
+      const maxChars = tool.maxResultChars
+      const executeFn = tool.execute
+      result[tool.name] = {
+        description: tool.description,
+        inputSchema: jsonSchema(tool.parameters),
+        execute: async (ipt: any) => {
+          const raw = await executeFn(ipt)
+          const text =
+            typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2)
+          return truncateResult(text, maxChars)
+        },
+      }
+    }
+
+    return result
+  }
+
   toAISDKFormat(): StreamTextTools {
     const result: StreamTextTools = {}
 
@@ -340,4 +365,19 @@ export class ToolRegistry {
 
     return { active, deferred, total: active + deferred }
   }
+}
+
+export function truncateResult(
+  text: string,
+  maxChars: number = DEFAULT_MAX_RESULT_CHARS,
+): string {
+  if (text.length <= maxChars) return text
+
+  const headSize = Math.floor(maxChars * 0.6)
+  const tailSize = maxChars - headSize
+  const head = text.slice(0, headSize)
+  const tail = text.slice(-tailSize)
+  const dropped = text.length - headSize - tailSize
+
+  return `${head}\n\n... [省略 ${dropped} 字符] ...\n\n${tail}`
 }

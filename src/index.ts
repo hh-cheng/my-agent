@@ -12,8 +12,10 @@ import { UsageTracker } from './usage/tracker'
 import { SessionStore } from './session/store'
 import { HookPipeline } from './security/hooks'
 import { debugCommands } from './commands/debug'
+import { createAgentCommands } from './commands/agents'
 import { allTools } from './tools/utility-tools'
 import { PluginManager } from './plugins/manager'
+import type { SpawnContext } from './agents/spawn'
 import { PluginDefinition } from './plugins/types'
 import { createRagTools } from './tools/rag-tools'
 import { memoryCommands } from './commands/memory'
@@ -23,6 +25,9 @@ import { ChannelGateway } from './channels/gateway'
 import { createCronTool } from './tools/cron-tools'
 import { contextCommands } from './commands/context'
 import { ToolRegistry } from './tools/tool-registry'
+import { createCronCommands } from './commands/cron'
+import { SubAgentRegistry } from './agents/registry'
+import { createSpawnTool } from './tools/spawn-tools'
 import { SqliteVectorStore } from './rag/sqlite-store'
 import { createSkillCommands } from './commands/skills'
 import { createMemoryTool } from './tools/memory-tools'
@@ -52,7 +57,6 @@ import {
   deferredTools,
   sessionContext,
 } from './context/prompts'
-import { createCronCommands } from './commands/cron'
 
 const deepSeek = createDeepSeek({
   apiKey: process.env.DEEPSEEK_API_KEY,
@@ -293,6 +297,24 @@ async function main() {
 
   if (DEBUG) await builder.debug(makePromptCtx())
 
+  //* === Subagents ===
+  const agentRegistry = new SubAgentRegistry({
+    maxSpawnDepth: 1,
+    maxConcurrent: 3,
+  })
+
+  function getSpawnCtx(): SpawnContext {
+    return {
+      model,
+      agentRegistry,
+      currentDepth: 0,
+      registry: toolRegistry,
+      buildSystem: () => builder.build(makePromptCtx()),
+    }
+  }
+
+  toolRegistry.register(createSpawnTool(getSpawnCtx))
+
   //* === Channel Gateway ===
   const gateway = new ChannelGateway({
     model,
@@ -342,6 +364,7 @@ async function main() {
   //* === 命令 ===
   const dispatch = createDispatcher([
     ...debugCommands,
+    ...createAgentCommands(agentRegistry),
     ...memoryCommands,
     ...contextCommands,
     ...createChannelCommands(gateway),
