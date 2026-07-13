@@ -26,10 +26,22 @@
 
 ## 快速开始
 
+项目固定使用 Bun `1.3.11`，建议先确认本地版本：
+
+```bash
+bun --version
+```
+
 安装依赖：
 
 ```bash
 bun install
+```
+
+复制环境变量模板：
+
+```bash
+cp .env.example .env
 ```
 
 启动交互式 Demo：
@@ -38,55 +50,75 @@ bun install
 bun run dev
 ```
 
-如果没有配置真实模型 API key，项目会自动使用本地 mock model：
+没有配置 `DEEPSEEK_API_KEY` 时，项目会自动使用本地 mock model。配置后会切换到 `deepseek-v4-flash`：
 
 ```bash
-# 可选：使用真实 DeepSeek
 DEEPSEEK_API_KEY=你的_key bun run dev
 ```
 
-也可以复制示例环境变量文件后再填写：
+恢复默认持久化会话或以 watch 模式开发：
 
 ```bash
-cp .env.example .env
+bun run continue
+bun run watch
+bun run dev --debug
 ```
 
-联网搜索工具是可选能力。配置 `TAVILY_API_KEY` 后会优先使用 Tavily；如果没有 Tavily 但配置了 `SERPER_API_KEY`，会回退到 Serper。
+### 可选能力
 
-RAG 也是可选能力。配置 `EMBED_API_KEY` 后，入口会注册 `rag_ingest` 和 `rag_search`，并把文档片段持久化到本地 `knowledge.db`：
+- 联网搜索：配置 `TAVILY_API_KEY` 后优先使用 Tavily；只配置 `SERPER_API_KEY` 时回退到 Serper。
+- RAG：配置 `EMBED_API_KEY` 后注册 `rag_ingest` 和 `rag_search`，数据持久化到 `knowledge.db`。
+- GitHub MCP：配置 `GITHUB_PERSONAL_ACCESS_TOKEN` 后尝试启动 GitHub MCP Server，并把远端工具注册为 `mcp__github__*`。
+- 飞书 Channel：总是启动本地 Dashboard；配置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 后额外连接飞书长连接，端口由 `FEISHU_PORT` 控制。
+
+例如启用 RAG：
 
 ```bash
 EMBED_API_KEY=你的_key bun run dev
 ```
 
-Memory 不需要额外配置。启动后可以让 Agent 用 `memory` 工具保存跨会话记忆，也可以在终端里输入：
+### 常用终端命令
+
+Memory 不需要额外配置：
 
 ```text
 /memory
 /memory search 偏好
+/lint
 /dream
 ```
 
-Skills、Plugins 和 Channels 不需要额外配置即可体验本地流程：
+查看上下文和用量：
+
+```text
+/context
+/usage
+/status
+```
+
+管理 Skills、Plugins 和 Channels：
 
 ```text
 /skill
 /skill load code-review
+/skill unload code-review
 /code-review src/tools
 /plugin
 /channel
 ```
 
-权限、Cron 和 Multi-Agent 也可以直接通过终端体验：
+查看权限、Hook、Cron 和子 Agent：
 
 ```text
 /role
+/role guest
 /hooks
 /cron
+/cron logs
 /agents
 ```
 
-飞书 Channel 默认会启动本地 Dashboard。未配置飞书凭证时，可以打开 `http://localhost:3000` 发送测试消息；配置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 后会连接真实飞书长连接。
+未配置飞书凭证时，可以打开 `http://localhost:3000`，通过 Dashboard 发送测试消息。
 
 退出：
 
@@ -103,73 +135,102 @@ bun test
 ## 项目结构
 
 ```text
-src/
-  index.ts                    # 入口：注册模型、工具、消息历史并启动对话
-  mock/
-    mock-model.ts             # 无 API key 时使用的本地模拟模型
-    mock-index.ts             # v0.1 ChatBot 阶段示例
-  tools/
-    tool-registry.ts          # 工具注册、结果截断、并发控制
-    utility-tools.ts          # weather / calculator / 文件读写 / 目录列表工具
-    search-tools.ts           # Tavily / Serper 搜索和网页抓取工具
-    memory-tools.ts           # 跨会话记忆工具
-    rag-tools.ts              # RAG 导入和搜索工具
-    tool-search.ts            # 延迟工具发现
-    cron-tools.ts             # 定时任务管理工具
-    spawn-tools.ts            # 子 Agent 派发工具
-  security/
-    roles.ts                  # owner / collaborator / guest 工具权限
-    bash-classifier.ts        # Bash 命令风险分类
-    hooks.ts                  # Pre/Post Tool Hook Pipeline
-  cron/
-    parser.ts                 # interval / cron / once 调度解析
-    service.ts                # 定时、执行、失败熔断和通知
-    store.ts                  # .cron/ 任务与运行日志持久化
-  agents/
-    registry.ts               # 子 Agent 状态、深度和并发限制
-    spawn.ts                  # 独立上下文执行与并行派发
-  skills/
-    loader.ts                 # 读取 .skills/*/SKILL.md 并生成 prompt 片段
-  plugins/
-    types.ts                  # PluginDefinition / PluginApi
-    manager.ts                # 插件加载、卸载、工具和通道回收
-  channels/
-    types.ts                  # ChannelDefinition 输入输出类型
-    gateway.ts                # 外部消息入口到 Agent Loop 的桥接
-    adapters/feishu.ts        # 飞书 Channel 插件示例
-  memory/
-    store.ts                  # .memory/ 持久化、索引、搜索、lint
-    validator.ts              # 记忆健康检查
-  rag/
-    chunker.ts                # 文档分块
-    embedder.ts               # SiliconFlow embedding 包装和内存缓存
-    sqlite-store.ts           # SQLite + FTS5 混合检索存储
-    search.ts                 # 向量/关键词打分和 MMR
-  session/
-    store.ts                  # 会话持久化：把 messages 追加写入 jsonl
-  context/
-    prompt-builder.ts         # Prompt Pipe：按模块组装 system prompt
-    prompts.ts                # coreRules / toolGuide / sessionContext 等 prompt 片段
-    compressor.ts             # 上下文压缩：microCompact + LLM summarize
-    defense.ts                # 三层防线：Token 估算、工具截断、TTL 修剪
-    view.ts                   # /context 和 /usage 的终端视图
-    compressor.test.ts        # 压缩单元测试
-  usage/
-    tracker.ts                # Prompt cache / token / cost 追踪
-  agent/
-    loop.ts                   # Agent Loop 核心实现
-    retry.ts                  # API 失败重试策略
-    loop-detection.ts         # 循环检测和熔断
-    loop.test.ts              # Agent Loop 重试和预算测试
-    loop-detection.test.ts    # 循环检测测试
-e2e/
-  compressor.e2e.ts           # 真实模型压缩 E2E
-  defense.e2e.ts              # Context defense E2E
-  agent-loop-defense.e2e.ts   # Agent Loop 防线 E2E
-  dream.e2e.ts                # Memory dream 整理 E2E
-  rag.e2e.ts                  # RAG 导入和搜索 E2E
-  plugins.e2e.ts              # Plugin 工具注册和 Channel 注册 E2E
+.
+├── src/
+│   ├── index.ts                    # Runtime 入口与各模块装配
+│   ├── env.ts                      # DEBUG 等运行环境开关
+│   ├── logging.ts                  # 终端日志样式和输出
+│   ├── agent/
+│   │   ├── loop.ts                 # Agent Loop、step 消费和预算控制
+│   │   ├── retry.ts                # 模型调用重试策略
+│   │   └── loop-detection.ts       # 重复调用、ping-pong 和无进展检测
+│   ├── agents/
+│   │   ├── types.ts                # 子 Agent 配置、请求与运行状态
+│   │   ├── registry.ts             # 深度、并发限制和运行记录
+│   │   └── spawn.ts                # 独立上下文执行与并行派发
+│   ├── tools/
+│   │   ├── tool-registry.ts        # 注册、权限过滤、Hook、锁和结果截断
+│   │   ├── utility-tools.ts        # 文件、搜索、计算、天气和 Bash 工具
+│   │   ├── search-tools.ts         # Tavily / Serper 搜索和网页抓取
+│   │   ├── tool-search.ts          # 延迟工具发现
+│   │   ├── memory-tools.ts         # Memory 管理工具
+│   │   ├── rag-tools.ts            # RAG 导入和搜索工具
+│   │   ├── cron-tools.ts           # 定时任务管理工具
+│   │   └── spawn-tools.ts          # 子 Agent 派发工具
+│   ├── commands/
+│   │   ├── index.ts                # Slash command dispatcher
+│   │   ├── memory.ts               # /memory、/lint、/dream
+│   │   ├── context.ts              # /context、/usage
+│   │   ├── debug.ts                # /status 和防线调试命令
+│   │   ├── skills.ts               # /skill 和 /<skill-name>
+│   │   ├── plugin.ts               # /plugin
+│   │   ├── channel.ts              # /channel
+│   │   ├── security.ts             # /role、/hooks
+│   │   ├── cron.ts                 # /cron
+│   │   └── agents.ts               # /agents
+│   ├── context/
+│   │   ├── prompt-builder.ts       # Prompt Pipe 组装器
+│   │   ├── prompt-pipe.ts          # Memory / RAG prompt pipe
+│   │   ├── prompts.ts              # Core、工具和 Session prompt 片段
+│   │   ├── compressor.ts           # microCompact 与 LLM summarize
+│   │   ├── defense.ts              # 截断、预算清理和 TTL 修剪
+│   │   └── view.ts                 # Context / Usage 终端视图
+│   ├── security/
+│   │   ├── roles.ts                # owner / collaborator / guest 权限
+│   │   ├── bash-classifier.ts      # Bash 命令风险分类
+│   │   ├── hooks.ts                # Pre/Post Tool Hook Pipeline
+│   │   └── hook-instances/         # 内置审计与输出处理 Hook
+│   ├── cron/
+│   │   ├── types.ts                # 任务配置、payload 和运行状态
+│   │   ├── parser.ts               # interval / cron / once 解析
+│   │   ├── service.ts              # 调度、执行、失败熔断和通知
+│   │   └── store.ts                # .cron/ 配置与日志持久化
+│   ├── memory/
+│   │   ├── store.ts                # .memory/ 持久化、索引和搜索
+│   │   └── validator.ts            # 重复、失效记忆检查
+│   ├── rag/
+│   │   ├── store.ts                # VectorStore 接口与公共类型
+│   │   ├── chunker.ts              # 文档分块
+│   │   ├── embedder.ts             # Embedding API 包装和内存缓存
+│   │   ├── sqlite-store.ts         # SQLite + FTS5 混合检索存储
+│   │   └── search.ts               # 相似度、混合打分和 MMR
+│   ├── skills/
+│   │   └── loader.ts               # 加载 .skills/*/SKILL.md
+│   ├── plugins/
+│   │   ├── types.ts                # PluginDefinition / PluginApi
+│   │   └── manager.ts              # 插件生命周期与能力回收
+│   ├── channels/
+│   │   ├── types.ts                # Channel 输入输出协议
+│   │   ├── gateway.ts              # 外部消息到 Agent Loop 的桥接
+│   │   └── adapters/feishu.ts      # 飞书与本地 Dashboard 示例
+│   ├── session/
+│   │   └── store.ts                # JSONL 会话持久化
+│   ├── usage/
+│   │   └── tracker.ts              # Token、prompt cache 和成本追踪
+│   ├── mcp/
+│   │   ├── mcp-client.ts           # Runtime 使用的 stdio MCP Client
+│   │   └── mcp-client-prod.ts      # 官方 SDK GitHub MCP 演示
+│   └── mock/
+│       ├── mock-model.ts           # 无模型凭证时的本地模拟模型
+│       ├── mock-pages.ts           # 搜索工具的本地模拟页面
+│       └── mock-index.ts           # v0.1 ChatBot 阶段示例
+├── .skills/
+│   └── code-review/SKILL.md        # 示例 Skill
+├── app/
+│   └── index.html                  # Channel 本地测试 Dashboard
+├── docs/                           # 七章教程与搜索工具说明
+├── e2e/                            # Compression、Defense、RAG 等 E2E
+└── package.json                    # Bun scripts 和依赖
 ```
+
+运行时数据保存在项目根目录：
+
+- `.sessions/`：默认会话 JSONL。
+- `.memory/`：跨会话 Memory 文件和索引。
+- `.cron/`：定时任务配置与执行日志。
+- `knowledge.db*`：启用 RAG 后生成的 SQLite 数据库及 WAL 文件。
+
+这些内容都属于本地状态，不应提交到 Git。
 
 ## 当前测试覆盖
 
@@ -179,7 +240,7 @@ e2e/
 bun test
 ```
 
-当前测试主要覆盖这些核心模块。
+`bun test` 默认运行源码旁的单元测试，当前主要覆盖这些核心模块。
 
 `loop-detection.test.ts`：
 
@@ -215,12 +276,12 @@ bun test
 - 检测重复记忆
 - 验证 `memory` 工具的 save/list/search/read/delete/lint 行为
 
-`plugins.e2e.ts`：
+专项 E2E 不属于默认 `bun test`，按需单独运行。其中 `plugins.e2e.ts` 覆盖：
 
 - 插件注册工具、执行工具、卸载后移除工具
 - 插件注册 Channel、卸载后移除 Channel
 
-专项 E2E 可以单独运行：
+全部专项命令：
 
 ```bash
 bun run test:e2e:compression
