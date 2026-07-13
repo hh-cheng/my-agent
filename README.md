@@ -11,6 +11,7 @@
 - 给循环加上重试、预算和死循环防护
 - 给 Agent 加上跨会话 Memory 和本地 RAG 知识库
 - 通过 Skills、Plugins 和 Channels 扩展 Agent 的工作方式、能力和入口
+- 用权限、Cron 和 Multi-Agent 约束、调度并拆分复杂任务
 
 ## 教程索引
 
@@ -20,6 +21,7 @@
 - [第四章：Memory 跨会话记忆](docs/chapter-4-memory.md)
 - [第五章：RAG 本地知识库](docs/chapter-5-rag.md)
 - [第六章：Skills、Plugins 和 Channels](docs/chapter-6-skills-plugins-channels.md)
+- [第七章：权限、Cron 和 Multi-Agent](docs/chapter-7-security-cron-multi-agent.md)
 - [联网搜索工具说明](docs/search-tools.md)
 
 ## 快速开始
@@ -75,6 +77,15 @@ Skills、Plugins 和 Channels 不需要额外配置即可体验本地流程：
 /channel
 ```
 
+权限、Cron 和 Multi-Agent 也可以直接通过终端体验：
+
+```text
+/role
+/hooks
+/cron
+/agents
+```
+
 飞书 Channel 默认会启动本地 Dashboard。未配置飞书凭证时，可以打开 `http://localhost:3000` 发送测试消息；配置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 后会连接真实飞书长连接。
 
 退出：
@@ -104,6 +115,19 @@ src/
     memory-tools.ts           # 跨会话记忆工具
     rag-tools.ts              # RAG 导入和搜索工具
     tool-search.ts            # 延迟工具发现
+    cron-tools.ts             # 定时任务管理工具
+    spawn-tools.ts            # 子 Agent 派发工具
+  security/
+    roles.ts                  # owner / collaborator / guest 工具权限
+    bash-classifier.ts        # Bash 命令风险分类
+    hooks.ts                  # Pre/Post Tool Hook Pipeline
+  cron/
+    parser.ts                 # interval / cron / once 调度解析
+    service.ts                # 定时、执行、失败熔断和通知
+    store.ts                  # .cron/ 任务与运行日志持久化
+  agents/
+    registry.ts               # 子 Agent 状态、深度和并发限制
+    spawn.ts                  # 独立上下文执行与并行派发
   skills/
     loader.ts                 # 读取 .skills/*/SKILL.md 并生成 prompt 片段
   plugins/
@@ -209,7 +233,7 @@ bun run test:e2e:plugins
 
 ## 后续实验方向
 
-当前 Agent Loop、Tool System、Context Engineering、Memory、RAG、Skills、Plugins 和 Channels 的教学版都已经完成。后续如果继续写，可以作为独立实验，而不是现有章节的必做功能：
+当前 Agent Loop、Tool System、Context Engineering、Memory、RAG、Skills、Plugins、Channels、权限、Cron 和 Multi-Agent 的教学版都已经完成。后续如果继续写，可以作为独立实验，而不是现有章节的必做功能：
 
 - 把循环检测结果结构化返回给上层 UI
 - 用 trace id 记录每一轮 step、tool-call、tool-result 和 token usage
@@ -218,3 +242,5 @@ bun run test:e2e:plugins
 - 给 Memory 增加更严格的 schema 校验或自动合并策略
 - 给 Plugin 增加 manifest 文件扫描和按目录自动发现
 - 给 Channel 增加持久化会话，避免外部通道重启后丢上下文
+- 给 Cron 执行器接入 AbortSignal，实现真正的任务超时
+- 让子 Agent 的 unlocked 工具路径继续执行安全 Hook，并落实工具白名单
