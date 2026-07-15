@@ -12,15 +12,20 @@ Memory 适合短小、长期、有主观选择的信息；RAG 适合较长的文
 
 ### 1. 启用 RAG
 
-RAG 默认不启用，因为 embedding 需要额外 API key。入口 [src/index.ts](../src/index.ts) 里是这样接线的：
+RAG 需要同时在配置中启用并提供 embedding API key。Runtime 装配层
+[src/main.ts](../src/main.ts) 里是这样接线的：
 
 ```ts
-const ragEnabled = Boolean(process.env.EMBED_API_KEY)
-const vectorStore = ragEnabled ? new SqliteVectorStore() : null
+const ragEnabled = config.rag.enabled && Boolean(process.env.EMBED_API_KEY)
+const vectorStore = ragEnabled
+  ? new SqliteVectorStore(config.rag.databasePath)
+  : null
 
 if (ragEnabled && vectorStore) {
   const embedFn = createDashScopeEmbedder()
-  toolRegistry.register(...createRagTools(vectorStore, embedFn))
+  toolRegistry.register(
+    ...createRagTools(vectorStore, embedFn, config.rag.docsDir),
+  )
 }
 ```
 
@@ -35,7 +40,7 @@ EMBED_API_KEY=你的_key bun run dev
 - `rag_ingest`：导入本地文档
 - `rag_search`：搜索已导入的知识库
 
-默认数据库文件是项目根目录的 `knowledge.db`。SQLite 开启 WAL 后，还可能生成 `knowledge.db-wal` 和 `knowledge.db-shm`。
+默认数据库文件是项目根目录的 `knowledge.db`，可以通过 `rag.databasePath` 修改。SQLite 开启 WAL 后，还可能生成 `knowledge.db-wal` 和 `knowledge.db-shm`。
 
 ### 2. rag_ingest：文档分块、向量化、入库
 

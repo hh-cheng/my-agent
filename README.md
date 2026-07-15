@@ -12,6 +12,7 @@
 - 给 Agent 加上跨会话 Memory 和本地 RAG 知识库
 - 通过 Skills、Plugins 和 Channels 扩展 Agent 的工作方式、能力和入口
 - 用权限、Cron 和 Multi-Agent 约束、调度并拆分复杂任务
+- 用配置 schema、初始化向导和 CLI 分发统一启动参数
 
 ## 教程索引
 
@@ -22,6 +23,7 @@
 - [第五章：RAG 本地知识库](docs/chapter-5-rag.md)
 - [第六章：Skills、Plugins 和 Channels](docs/chapter-6-skills-plugins-channels.md)
 - [第七章：权限、Cron 和 Multi-Agent](docs/chapter-7-security-cron-multi-agent.md)
+- [第八章：配置系统与 CLI 入口](docs/chapter-8-config-and-cli.md)
 - [联网搜索工具说明](docs/search-tools.md)
 
 ## 快速开始
@@ -44,13 +46,20 @@ bun install
 cp .env.example .env
 ```
 
+也可以运行初始化向导生成 `super-agent.config.json` 并更新 `.env`：
+
+```bash
+bun run init
+```
+
 启动交互式 Demo：
 
 ```bash
 bun run dev
 ```
 
-没有配置 `DEEPSEEK_API_KEY` 时，项目会自动使用本地 mock model。配置后会切换到 `deepseek-v4-flash`：
+没有配置 `DEEPSEEK_API_KEY` 时，项目会自动使用本地 mock model。配置凭证后使用
+`super-agent.config.json` 指定的模型；没有配置文件时默认为 `deepseek-v4-flash`：
 
 ```bash
 DEEPSEEK_API_KEY=你的_key bun run dev
@@ -69,7 +78,7 @@ bun run dev --debug
 - 联网搜索：配置 `TAVILY_API_KEY` 后优先使用 Tavily；只配置 `SERPER_API_KEY` 时回退到 Serper。
 - RAG：配置 `EMBED_API_KEY` 后注册 `rag_ingest` 和 `rag_search`，数据持久化到 `knowledge.db`。
 - GitHub MCP：配置 `GITHUB_PERSONAL_ACCESS_TOKEN` 后尝试启动 GitHub MCP Server，并把远端工具注册为 `mcp__github__*`。
-- 飞书 Channel：总是启动本地 Dashboard；配置 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 后额外连接飞书长连接，端口由 `FEISHU_PORT` 控制。
+- 飞书 Channel：在 `super-agent.config.json` 中启用后启动本地 Dashboard；配置 App ID 和 App Secret 后额外连接飞书长连接。
 
 例如启用 RAG：
 
@@ -118,7 +127,8 @@ Memory 不需要额外配置：
 /agents
 ```
 
-未配置飞书凭证时，可以打开 `http://localhost:3000`，通过 Dashboard 发送测试消息。
+启用飞书 Channel 后，可以打开配置端口对应的 Dashboard（默认
+`http://localhost:3000`）发送测试消息。
 
 退出：
 
@@ -137,9 +147,14 @@ bun test
 ```text
 .
 ├── src/
-│   ├── index.ts                    # Runtime 入口与各模块装配
+│   ├── index.ts                    # CLI 命令分发入口
+│   ├── main.ts                     # 配置驱动的 Runtime 装配
 │   ├── env.ts                      # DEBUG 等运行环境开关
 │   ├── logging.ts                  # 终端日志样式和输出
+│   ├── config/
+│   │   ├── schema.ts               # Zod 配置协议和默认值
+│   │   ├── loader.ts               # JSON 加载、环境变量替换和校验
+│   │   └── init.ts                 # 交互式初始化向导
 │   ├── agent/
 │   │   ├── loop.ts                 # Agent Loop、step 消费和预算控制
 │   │   ├── retry.ts                # 模型调用重试策略
@@ -218,7 +233,7 @@ bun test
 │   └── code-review/SKILL.md        # 示例 Skill
 ├── app/
 │   └── index.html                  # Channel 本地测试 Dashboard
-├── docs/                           # 七章教程与搜索工具说明
+├── docs/                           # 八章教程与搜索工具说明
 ├── e2e/                            # Compression、Defense、RAG 等 E2E
 └── package.json                    # Bun scripts 和依赖
 ```
@@ -294,7 +309,7 @@ bun run test:e2e:plugins
 
 ## 后续实验方向
 
-当前 Agent Loop、Tool System、Context Engineering、Memory、RAG、Skills、Plugins、Channels、权限、Cron 和 Multi-Agent 的教学版都已经完成。后续如果继续写，可以作为独立实验，而不是现有章节的必做功能：
+当前 Agent Loop、Tool System、Context Engineering、Memory、RAG、Skills、Plugins、Channels、权限、Cron、Multi-Agent、配置系统和 CLI 入口的教学版都已经完成。后续如果继续写，可以作为独立实验，而不是现有章节的必做功能：
 
 - 把循环检测结果结构化返回给上层 UI
 - 用 trace id 记录每一轮 step、tool-call、tool-result 和 token usage

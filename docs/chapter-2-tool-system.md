@@ -78,7 +78,7 @@ streamText({
 
 ### 搜索工具选择
 
-入口 [src/index.ts](../src/index.ts) 会注册：
+Runtime 装配层 [src/main.ts](../src/main.ts) 会注册：
 
 ```ts
 toolRegistry.register(pickSearchTool(), webFetchTool)

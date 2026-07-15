@@ -51,7 +51,7 @@ const skillLoader = new SkillLoader('.')
 const activeSkills = new Set<string>()
 ```
 
-入口 [src/index.ts](../src/index.ts) 会把它接进 PromptBuilder：
+Runtime 装配层 [src/main.ts](../src/main.ts) 会把它接进 PromptBuilder：
 
 ```ts
 const builder = new PromptBuilder()
@@ -228,15 +228,17 @@ const availablePlugins = new Map<string, PluginDefinition>([
 ...createPluginCommands(pluginManager, availablePlugins)
 ```
 
-当前项目里的示例插件是 `feishu`。入口启动时会默认加载它：
+当前项目里的示例插件是 `feishu`。配置启用飞书 Channel 后，Runtime 才会加载它：
 
 ```ts
 pluginManager.setChannelGateway(gateway)
-await pluginManager.load(feishuPlugin)
+if (config.channels.feishu.enabled) {
+  await pluginManager.load(feishuPlugin, config.channels.feishu)
+}
 await gateway.startAll()
 ```
 
-所以 `/plugin list` 会显示它已经加载。教学重点不在飞书本身，而在这个扩展路径：任何新插件只要实现 `PluginDefinition`，就可以把工具或消息通道挂到同一个 Agent Runtime 上。
+启用后，`/plugin list` 会显示它已经加载。教学重点不在飞书本身，而在这个扩展路径：任何新插件只要实现 `PluginDefinition`，就可以把工具或消息通道挂到同一个 Agent Runtime 上。
 
 ### 5. Channel：把外部消息转成 Agent Loop 输入
 
@@ -335,12 +337,13 @@ export function createFeishuPlugin(): PluginDefinition {
 }
 ```
 
-`FeishuChannel.start()` 里有两条路径：
+配置启用飞书后，`FeishuChannel.start()` 里有两条路径：
 
-- 总是启动一个本地 Dashboard，默认端口是 `3000`。
+- 启动一个本地 Dashboard，默认端口是 `3000`。
 - 如果配置了 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET`，再启动飞书长连接。
 
-没有飞书凭证时，也可以用 Dashboard 或 webhook 模拟消息：
+启用 Channel 但没有飞书凭证时，也可以用 Dashboard 或 webhook 模拟消息。先运行
+`bun run init` 并选择启用飞书，再启动：
 
 ```bash
 bun run dev
@@ -354,10 +357,24 @@ http://localhost:3000
 
 页面上的“发送测试消息”会走 `/webhook/feishu`，最终仍然进入 `ChannelGateway.handleIncoming()`。
 
-配置真实飞书时：
+配置真实飞书时，在 `super-agent.config.json` 中启用 Channel 并设置端口：
+
+```json
+{
+  "channels": {
+    "feishu": {
+      "enabled": true,
+      "appId": "${FEISHU_APP_ID}",
+      "appSecret": "${FEISHU_APP_SECRET}",
+      "port": 3000
+    }
+  }
+}
+```
+
+凭证仍然放在环境变量中：
 
 ```bash
-FEISHU_PORT=3000 \
 FEISHU_APP_ID=cli_xxx \
 FEISHU_APP_SECRET=xxx \
 bun run dev
@@ -395,7 +412,7 @@ You: /plugin
 You: /channel
 ```
 
-启动后如果没有配置飞书凭证，终端会提示 Dashboard 地址。通过页面发送测试消息后，能在终端看到类似日志：
+启用飞书 Channel 后，终端会提示 Dashboard 地址。通过页面发送测试消息后，能在终端看到类似日志：
 
 ```text
 [gateway:feishu:in] web-dashboard(web-dashboard): 你好

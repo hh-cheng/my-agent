@@ -258,7 +258,7 @@ export interface CronExecutor {
 }
 ```
 
-入口 [src/index.ts](../src/index.ts) 负责把这个接口接回已有的 `agentLoop()`：
+Runtime 装配层 [src/main.ts](../src/main.ts) 负责把这个接口接回已有的 `agentLoop()`：
 
 ```ts
 cronService.setExecutor({
