@@ -35,10 +35,10 @@ export function createAgentCommands(
 
       const config = agentRegistry.getConfig()
       logger.info(
-        `\n  活跃: ${active.length}/${config.maxConcurrent} | 完成: ${completed.length} | 失败: ${failed.length}`,
+        `\n活跃: ${active.length}/${config.maxConcurrent} | 完成: ${completed.length} | 失败: ${failed.length}`,
       )
       logger.raw(
-        `  最大深度: ${config.maxSpawnDepth} | 最大并发: ${config.maxConcurrent}`,
+        `最大深度: ${config.maxSpawnDepth} | 最大并发: ${config.maxConcurrent}`,
       )
     }
     return true
