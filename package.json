@@ -6,6 +6,7 @@
   "scripts": {
     "prepare": "husky",
     "dev": "bun src/index.ts",
+    "init": "bun src/index.ts init",
     "continue": "bun src/index.ts --continue",
     "test": "bun test",
     "test:e2e:compression": "bun test ./e2e/compressor.e2e.ts",

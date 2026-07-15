@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { chunkDocument } from '@/rag/chunker'
 import type { SqliteVectorStore } from '@/rag/sqlite-store'
 import type { ToolDefinition } from './tool-registry'
@@ -6,19 +7,28 @@ import { embed, type EmbeddingFn } from '@/rag/embedder'
 export function createRagTools(
   vectorStore: SqliteVectorStore,
   embedFn: EmbeddingFn,
+  docsDir = '.',
 ): ToolDefinition[] {
   const ragIngestTool: ToolDefinition = {
     name: 'rag_ingest',
     description: '将文档导入知识库。内容会被分块、向量化后存储',
     parameters: {
       type: 'object',
-      properties: { path: { type: 'string', description: '文档路径' } },
+      properties: {
+        path: {
+          type: 'string',
+          description: `文档路径；相对路径基于 ${docsDir} 解析`,
+        },
+      },
       required: ['path'],
       additionalProperties: false,
     },
-    execute: async ({ path }: { path: string }) => {
-      const text = await Bun.file(path).text()
-      const chunks = chunkDocument(path, text)
+    execute: async ({ path: documentPath }: { path: string }) => {
+      const resolvedPath = path.isAbsolute(documentPath)
+        ? documentPath
+        : path.join(docsDir, documentPath)
+      const text = await Bun.file(resolvedPath).text()
+      const chunks = chunkDocument(resolvedPath, text)
       const embeddings = await embed(
         embedFn,
         chunks.map((c) => c.text),
