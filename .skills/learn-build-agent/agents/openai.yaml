@@ -1,0 +1,4 @@
+interface:
+  display_name: "手写 Agent 学习教练"
+  short_description: "参考本项目，引导你在新仓库从零手写 Agent"
+  default_prompt: "使用 $learn-build-agent，以当前项目为参考，带我在一个新仓库里从零手写 Agent。"

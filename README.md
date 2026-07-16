@@ -2,6 +2,34 @@
 
 一个手搓 Agent 的 TypeScript 教学项目。
 
+## 使用手写 Agent 教学 Skill
+
+项目内置了 `.skills/learn-build-agent` 教学 Skill，无需单独下载安装。
+克隆项目后安装依赖并启动 Agent：
+
+```bash
+bun install
+bun run dev
+```
+
+先准备一个不同于本项目的新目录或空 Git 仓库。启动后，把目标路径告诉学习教练；
+它会只读参考本项目，并引导你在新仓库中逐步手写自己的 Agent：
+
+```text
+/learn-build-agent 我会 TypeScript，但没接触过 LLM。请带我在 ../my-first-agent 从第一课开始手写 Agent
+```
+
+也可以先激活 Skill，在后续多轮对话中持续使用：
+
+```text
+/skill load learn-build-agent
+```
+
+该 Skill 把本仓库作为只读参考实现，所有课程代码、测试和阶段成果都写在你指定的
+新仓库里。它通过预测、最小实现、测试和复述，循序构建 Agent Loop、工具系统、
+上下文工程、Memory、RAG、扩展机制、安全与 Runtime 装配。课程默认先使用可预测
+的本地假模型理解机制，不需要模型 API Key；掌握核心循环后再接真实 Provider。
+
 这个项目不是为了封装一个通用框架，而是把 ChatBot 演进成 Agent 的关键机制拆开写清楚：
 
 - 给模型注册工具
